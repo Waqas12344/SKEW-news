@@ -1,6 +1,9 @@
+'use client';
+
 import Link from "next/link";
 import { Menu } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useUser, UserButton } from "@clerk/nextjs";
 
 const navLinks = [
   { label: "Home", href: "/", active: true },
@@ -10,6 +13,8 @@ const navLinks = [
 ];
 
 export function SiteHeader() {
+  const { isLoaded, isSignedIn } = useUser();
+
   return (
     <header className="sticky top-0 z-50 w-full bg-white border-b border-[#E5E7EB]">
       <div className="container-biasly h-[52px] flex items-center justify-between gap-4">
@@ -51,14 +56,34 @@ export function SiteHeader() {
           ))}
         </nav>
 
-        {/* Right: action buttons */}
+        {/* Right: auth-aware action buttons */}
         <div className="flex items-center gap-2">
           <Button variant="primary" size="sm">
             Subscribe
           </Button>
-          <Button variant="outline" size="sm">
-            Login
-          </Button>
+
+          {/* Skeleton placeholder while Clerk loads — avoids layout shift */}
+          {!isLoaded && (
+            <div className="w-[62px] h-8 rounded-md bg-[#F0F0F0] animate-pulse" />
+          )}
+
+          {isLoaded && isSignedIn && (
+            <UserButton
+              appearance={{
+                elements: {
+                  avatarBox: "w-8 h-8",
+                },
+              }}
+            />
+          )}
+
+          {isLoaded && !isSignedIn && (
+            <Link href="/sign-in">
+              <Button variant="outline" size="sm">
+                Login
+              </Button>
+            </Link>
+          )}
         </div>
       </div>
     </header>
