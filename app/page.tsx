@@ -9,7 +9,7 @@ import { ArticleCard, type ArticleCardProps } from "@/components/ui/article-card
 const MOCK_ARTICLES: ArticleCardProps[] = [
   {
     title: "Trump Sends Iran Revised Peace Proposal With Tougher Terms: Report",
-    imageUrl: "https://placehold.co/600x338/1a1a1a/ffffff?text=Politics",
+    imageUrl: "/01-ui-design-system.png",
     category: "Politics",
     region: "United States",
     leftPct: 20,
@@ -19,7 +19,7 @@ const MOCK_ARTICLES: ArticleCardProps[] = [
   },
   {
     title: "Researchers Make Case for Grapes as a 'Superfood' After Review of Health Evidence",
-    imageUrl: "https://placehold.co/600x338/1a3a1a/ffffff?text=Health",
+    imageUrl: "/01-ui-design-system.png",
     category: "Health",
     region: "United States",
     leftPct: 18,
@@ -29,7 +29,7 @@ const MOCK_ARTICLES: ArticleCardProps[] = [
   },
   {
     title: "CERN Finds High-Significance Hint of Physics Beyond Standard Model",
-    imageUrl: "https://placehold.co/600x338/0a1a2a/ffffff?text=Science",
+    imageUrl: "/01-ui-design-system.png",
     category: "Science",
     region: "Switzerland",
     leftPct: 18,
@@ -39,7 +39,7 @@ const MOCK_ARTICLES: ArticleCardProps[] = [
   },
   {
     title: "Indigenous Leader Brooklyn Rivera Dies in Nicaragua After Nearly 3 Years of Detention",
-    imageUrl: "https://placehold.co/600x338/2a1a0a/ffffff?text=World",
+    imageUrl: "/01-ui-design-system.png",
     category: "World",
     region: "Nicaragua",
     leftPct: 54,
@@ -49,7 +49,7 @@ const MOCK_ARTICLES: ArticleCardProps[] = [
   },
   {
     title: "UN Security Council to Hold Emergency Meeting as Israel Pushes Deeper into Lebanon",
-    imageUrl: "https://placehold.co/600x338/1a1a1a/ffffff?text=World",
+    imageUrl: "/01-ui-design-system.png",
     category: "World",
     region: "Middle East",
     leftPct: 22,
@@ -59,7 +59,7 @@ const MOCK_ARTICLES: ArticleCardProps[] = [
   },
   {
     title: "Oil Prices Dip as OPEC+ Considers Output Increase Amid Weak Demand",
-    imageUrl: "https://placehold.co/600x338/0a2a2a/ffffff?text=Business",
+    imageUrl: "/01-ui-design-system.png",
     category: "Business",
     region: "Global",
     leftPct: 25,
@@ -69,7 +69,7 @@ const MOCK_ARTICLES: ArticleCardProps[] = [
   },
   {
     title: "SpaceX Launches Starship Test Flight in Milestone for Mars Program",
-    imageUrl: "https://placehold.co/600x338/05051a/ffffff?text=Technology",
+    imageUrl: "/01-ui-design-system.png",
     category: "Technology",
     region: "United States",
     leftPct: 12,
@@ -79,7 +79,7 @@ const MOCK_ARTICLES: ArticleCardProps[] = [
   },
   {
     title: "Apple Unveils AI-Powered Features Across iPhone, iPad and Mac",
-    imageUrl: "https://placehold.co/600x338/1a1a1a/ffffff?text=Business",
+    imageUrl: "/01-ui-design-system.png",
     category: "Business",
     region: "United States",
     leftPct: 15,
@@ -89,7 +89,7 @@ const MOCK_ARTICLES: ArticleCardProps[] = [
   },
   {
     title: "2025 on Track to Be Among Top 3 Hottest Years, EU Climate Service Says",
-    imageUrl: "https://placehold.co/600x338/2a1a0a/ffffff?text=Climate",
+    imageUrl: "/01-ui-design-system.png",
     category: "Climate",
     region: "Global",
     leftPct: 33,
@@ -99,7 +99,7 @@ const MOCK_ARTICLES: ArticleCardProps[] = [
   },
   {
     title: "Fed Holds Rates Steady, Signals Caution on Inflation and Growth Outlook",
-    imageUrl: "https://placehold.co/600x338/1a1510/ffffff?text=Economy",
+    imageUrl: "/01-ui-design-system.png",
     category: "Economy",
     region: "United States",
     leftPct: 30,
@@ -109,7 +109,7 @@ const MOCK_ARTICLES: ArticleCardProps[] = [
   },
   {
     title: "Real Madrid Win Champions League After Comeback Victory in Final",
-    imageUrl: "https://placehold.co/600x338/0a1a0a/ffffff?text=Soccer",
+    imageUrl: "/01-ui-design-system.png",
     category: "Soccer",
     region: "Europe",
     leftPct: 10,
@@ -119,7 +119,7 @@ const MOCK_ARTICLES: ArticleCardProps[] = [
   },
   {
     title: "Wildfires Force Thousands to Evacuate Across Western Canada",
-    imageUrl: "https://placehold.co/600x338/2a0a0a/ffffff?text=Environment",
+    imageUrl: "/01-ui-design-system.png",
     category: "Environment",
     region: "Canada",
     leftPct: 27,
