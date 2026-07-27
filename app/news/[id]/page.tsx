@@ -1,3 +1,4 @@
+import { notFound } from "next/navigation";
 import Image from "next/image";
 import { Bookmark, Share2, MoreHorizontal, Info } from "lucide-react";
 import { SiteHeader } from "@/components/homepage/SiteHeader";
@@ -5,134 +6,20 @@ import { Footer } from "@/components/homepage/Footer";
 import { BiasMeter } from "@/components/ui/bias-meter";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { RelatedArticleCard } from "@/components/ui/related-article-card";
+import { getArticleDetailById } from "@/lib/supabase/queries/articles";
+import { toDetailData } from "@/lib/supabase/mappers";
+import type { RelatedArticleCardProps } from "@/components/ui/related-article-card";
+
+export const dynamic = "force-dynamic";
 
 // ---------------------------------------------------------------------------
-// Types
+// Types (keep local — no shared module needed)
 // ---------------------------------------------------------------------------
 type BiasLabel = "left" | "center" | "right" | "mixed" | "unclear";
 
 interface SourceRow {
   name: string;
   bias: BiasLabel;
-}
-
-// ---------------------------------------------------------------------------
-// Mock data — replaced with Supabase lookup in a later step
-// ---------------------------------------------------------------------------
-const MOCK_ARTICLE = {
-  id: "1",
-  title: "Trump Sends Iran Revised Peace Proposal With Tougher Terms: Report",
-  category: "Politics",
-  region: "United States",
-  author: "David Morgan",
-  publishedAt: "May 31, 2026",
-  readTime: "12 min read",
-  imageUrl: "/01-ui-design-system.png",
-  imageCaption:
-    "President Donald Trump in the Cabinet Room at the White House, Washington, D.C., May 30, 2026. Photo: Andrew Harnik/Getty Images.",
-  leftPct: 20,
-  centerPct: 31,
-  rightPct: 49,
-  sourcesCount: 12,
-  overallBias: "right" as BiasLabel,
-  overallBiasLabel: "Right 49%",
-  body: [
-    "The Trump administration has sent Iran a revised nuclear deal proposal that includes tougher terms on uranium enrichment and stronger verification measures, according to a report published Saturday.",
-    "The new proposal, delivered through intermediaries in Oman, requires Iran to halt all uranium enrichment on its soil and ship its stockpile of enriched uranium out of the country. It also demands unrestricted access for international inspectors to all Iranian nuclear facilities, including military sites.",
-    '"This is a take-it-or-leave-it proposal," a senior administration official told the Wall Street Journal. "The President wants a deal, but he will not accept a weak agreement that puts America or our allies at risk."',
-    "Iran has not yet officially responded to the proposal. However, Iranian Foreign Minister Hossein Amir-Abdollahian said last week that any deal must respect Iran's right to peaceful nuclear energy and include the lifting of all U.S. sanctions.",
-    "The revised proposal comes after several rounds of indirect talks between U.S. and Iranian officials failed to produce a breakthrough. The Trump administration has warned that if diplomacy fails, it is prepared to take other action to prevent Iran from obtaining a nuclear weapon.",
-    "European allies have urged both sides to continue negotiations. \"We believe diplomacy is still the best path forward,\" said a spokesperson for the EU's foreign policy chief.",
-    "Israel, which has long opposed the 2015 nuclear deal with Iran, praised the Trump administration's tougher stance. \"This is the kind of leadership that was missing in the past,\" said Israeli Prime Minister Benjamin Netanyahu in a statement.",
-    "The fate of the proposal now rests with Iran, as global attention remains focused on whether a new nuclear agreement can be reached — or if tensions will escalate further.",
-  ],
-  summaryDate: "May 31, 2026",
-  summaryReadTime: "3 min read",
-  summaryPoints: [
-    "The Trump administration has sent Iran a revised nuclear deal proposal with tougher terms, including a complete halt to uranium enrichment and uranium stockpiles.",
-    "The proposal also demands unrestricted inspector access to all nuclear sites, including military facilities.",
-    "Iran has not responded officially but says any deal must respect Iran's right to peaceful nuclear energy and include sanctions relief.",
-    "The U.S. warns it is prepared to take other action if diplomacy fails, while European allies urge continued negotiations.",
-    "Israel supports the tougher stance, praising the administration's determination to prevent Iran from acquiring nuclear weapons.",
-  ],
-  analysisNote:
-    "Our analysis is based on the political leaning of the publication and how the story is framed. Sources are weighted by reliability and recency.",
-  sourceBreakdown: { left: 2, leftPct: 20, center: 4, centerPct: 37, right: 6, rightPct: 49 },
-  topSources: [
-    { name: "Fox News", bias: "right" },
-    { name: "The Wall Street Journal", bias: "center" },
-    { name: "Reuters", bias: "center" },
-    { name: "BBC", bias: "center" },
-    { name: "CNN", bias: "left" },
-    { name: "The New York Times", bias: "center" },
-    { name: "The Washington Post", bias: "center" },
-    { name: "Newsmax", bias: "right" },
-  ] as SourceRow[],
-};
-
-const RELATED_STORIES = [
-  {
-    title: "Iran Says It Will Not Negotiate Under 'Maximum Pressure'",
-    category: "World",
-    region: "Middle East",
-    publishedAt: "May 29, 2026",
-    readingTime: "8 min read",
-    imageUrl: "https://placehold.co/160x160/1a1a2a/ffffff?text=Iran",
-    href: "/news/2",
-  },
-  {
-    title: "Bipartisan Group Urges Diplomacy With Iran",
-    category: "Politics",
-    region: "United States",
-    publishedAt: "May 28, 2026",
-    readingTime: "5 min read",
-    imageUrl: "https://placehold.co/160x160/0a1a0a/ffffff?text=Politics",
-    href: "/news/3",
-  },
-  {
-    title: "US Sanctions More Iranian Entities Over Nuclear Program",
-    category: "Politics",
-    region: "United States",
-    publishedAt: "May 29, 2026",
-    readingTime: "6 min read",
-    imageUrl: "https://placehold.co/160x160/2a1a0a/ffffff?text=Sanctions",
-    href: "/news/4",
-  },
-  {
-    title: "What's in the 2015 Iran Nuclear Deal?",
-    category: "Science",
-    region: "Nuclear Policy",
-    publishedAt: "May 26, 2026",
-    readingTime: "10 min read",
-    imageUrl: "https://placehold.co/160x160/1a0a2a/ffffff?text=Nuclear",
-    href: "/news/5",
-  },
-  {
-    title: "Oman Hosts Another Round of US–Iran Nuclear Talks",
-    category: "World",
-    region: "Middle East",
-    publishedAt: "May 27, 2026",
-    readingTime: "7 min read",
-    imageUrl: "https://placehold.co/160x160/0a2a1a/ffffff?text=Talks",
-    href: "/news/6",
-  },
-  {
-    title: "Israel Reaffirms Red Line Over Iranian Nuclear Program",
-    category: "World",
-    region: "Middle East",
-    publishedAt: "May 24, 2026",
-    readingTime: "9 min read",
-    imageUrl: "https://placehold.co/160x160/2a0a0a/ffffff?text=Israel",
-    href: "/news/7",
-  },
-];
-
-// ---------------------------------------------------------------------------
-// Static params — pre-render /news/1 through /news/12
-// ---------------------------------------------------------------------------
-export function generateStaticParams() {
-  return Array.from({ length: 12 }, (_, i) => ({ id: String(i + 1) }));
 }
 
 // ---------------------------------------------------------------------------
@@ -173,8 +60,20 @@ function SidebarCardHeader({ title }: { title: string }) {
 // ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
-export default function NewsDetailsPage() {
-  const article = MOCK_ARTICLE;
+export default async function NewsDetailsPage({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}) {
+  const { id } = await params;
+
+  const row = await getArticleDetailById(id);
+  if (!row) notFound();
+
+  const article = toDetailData(row);
+
+  // Related stories deferred to §20 (pgvector). Section is hidden when empty.
+  const relatedStories: RelatedArticleCardProps[] = [];
 
   return (
     <div className="flex flex-col min-h-screen bg-[#F6F6F6]">
@@ -205,7 +104,7 @@ export default function NewsDetailsPage() {
 
               {/* Breadcrumb */}
               <p className="text-[11px] font-medium text-[#8B7280] uppercase tracking-wide">
-                {article.category}&nbsp;&nbsp;·&nbsp;&nbsp;{article.region}
+                {[article.category, article.region].filter(Boolean).join("\u00a0\u00a0·\u00a0\u00a0")}
               </p>
 
               {/* Title */}
@@ -265,7 +164,7 @@ export default function NewsDetailsPage() {
                   center={article.centerPct}
                   right={article.rightPct}
                 />
-                <p className="text-[11px] text-[#8B7280]">{article.sourcesCount} sources</p>
+                <p className="text-[11px] text-[#8B7280]">{article.sourcesCount} source{article.sourcesCount !== 1 ? "s" : ""}</p>
               </div>
 
               {/* Article body */}
@@ -280,17 +179,21 @@ export default function NewsDetailsPage() {
                 ))}
               </div>
 
-              {/* Related Stories */}
-              <div className="flex flex-col gap-4 pt-2">
-                <h3 className="text-[20px] font-semibold leading-[1.3] text-[#0D0D0F]">
-                  Related Stories
-                </h3>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-                  {RELATED_STORIES.map((story) => (
-                    <RelatedArticleCard key={story.href} {...story} />
-                  ))}
+              {/* Related Stories — hidden until §20 pgvector populates it */}
+              {relatedStories.length > 0 && (
+                <div className="flex flex-col gap-4 pt-2">
+                  <h3 className="text-[20px] font-semibold leading-[1.3] text-[#0D0D0F]">
+                    Related Stories
+                  </h3>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+                    {relatedStories.map((story) => (
+                      <div key={story.href}>
+                        {/* RelatedArticleCard rendered here in §20 */}
+                      </div>
+                    ))}
+                  </div>
                 </div>
-              </div>
+              )}
 
               {/* Newsletter CTA strip */}
               <div className="bg-[#F6F6F6] border border-[#E5E7EB] rounded-[12px] p-6 mt-4">
@@ -329,19 +232,19 @@ export default function NewsDetailsPage() {
                 {/* Overall bias badge */}
                 <div className="flex flex-col gap-1">
                   <div className="w-full flex items-center justify-center py-2.5 rounded-[8px] bg-[#1D4ED8] text-white">
-                    <span className="text-[16px] font-bold">Right 49%</span>
+                    <span className="text-[16px] font-bold">{article.overallBiasLabel}</span>
                   </div>
                   <p className="text-[11px] text-[#8B7280] text-center">
-                    Based on {article.sourcesCount} balanced sources
+                    Based on {article.sourcesCount} balanced source{article.sourcesCount !== 1 ? "s" : ""}
                   </p>
                 </div>
 
                 {/* Breakdown rows */}
                 <div className="flex flex-col gap-3">
                   {[
-                    { label: "Left", pct: article.leftPct, color: "#843318" },
+                    { label: "Left",   pct: article.leftPct,   color: "#843318" },
                     { label: "Center", pct: article.centerPct, color: "#6B7280" },
-                    { label: "Right", pct: article.rightPct, color: "#1D4ED8" },
+                    { label: "Right",  pct: article.rightPct,  color: "#1D4ED8" },
                   ].map(({ label, pct, color }) => (
                     <div key={label} className="flex items-center gap-3">
                       <span className="w-12 text-[11px] text-[#8B7280]">{label}</span>
@@ -396,12 +299,12 @@ export default function NewsDetailsPage() {
                 {/* Total + mini bias bars */}
                 <div className="flex flex-col gap-3">
                   <p className="text-[13px] font-semibold text-[#0D0D0F]">
-                    {article.sourcesCount} Total Sources
+                    {article.sourcesCount} Total Source{article.sourcesCount !== 1 ? "s" : ""}
                   </p>
                   {[
-                    { label: "Left", count: article.sourceBreakdown.left, pct: article.sourceBreakdown.leftPct, color: "#843318" },
+                    { label: "Left",   count: article.sourceBreakdown.left,   pct: article.sourceBreakdown.leftPct,   color: "#843318" },
                     { label: "Center", count: article.sourceBreakdown.center, pct: article.sourceBreakdown.centerPct, color: "#6B7280" },
-                    { label: "Right", count: article.sourceBreakdown.right, pct: article.sourceBreakdown.rightPct, color: "#1D4ED8" },
+                    { label: "Right",  count: article.sourceBreakdown.right,  pct: article.sourceBreakdown.rightPct,  color: "#1D4ED8" },
                   ].map(({ label, count, pct, color }) => (
                     <div key={label} className="flex items-center gap-3">
                       <span className="w-12 text-[11px] text-[#8B7280]">{label}</span>
@@ -421,7 +324,7 @@ export default function NewsDetailsPage() {
                   <p className="text-[13px] font-semibold text-[#0D0D0F] mb-1">
                     Top Sources
                   </p>
-                  {article.topSources.map((source) => (
+                  {(article.topSources as SourceRow[]).map((source) => (
                     <div
                       key={source.name}
                       className="flex items-center justify-between py-1.5 border-b border-[#F0F0F0] last:border-0"
