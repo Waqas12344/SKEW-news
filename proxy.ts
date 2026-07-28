@@ -5,6 +5,13 @@ const isPublicRoute = createRouteMatcher([
   '/sign-in(.*)',
   '/sign-up(.*)',
   '/api/public(.*)',
+  // Action and read routes — guarded by x-skew-admin-secret, not Clerk
+  '/api/scrape',
+  '/api/sources',
+  '/api/analyze',
+  '/api/logs',
+  '/api/oxylabs(.*)',
+  '/api/cron(.*)',
 ]);
 
 export default clerkMiddleware(async (auth, req) => {

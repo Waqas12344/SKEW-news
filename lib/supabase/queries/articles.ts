@@ -134,3 +134,50 @@ export async function getExistingUrls(urls: string[]): Promise<Set<string>> {
 
   return existing;
 }
+
+const MAX_URLS_PER_IN_QUERY = 15;
+
+/**
+ * Checks whether any of the given URLs already exist in the DB,
+ * testing both the `url` column and the `canonical_url` column.
+ * Queries in chunks of ≤15 per .in() call (§9 URL existence check).
+ * Returns a Set of all known URL strings from either column.
+ */
+export async function articleUrlsExist(urls: string[]): Promise<Set<string>> {
+  const existing = new Set<string>();
+  if (urls.length === 0) return existing;
+
+  const client = createServiceClient();
+
+  for (let i = 0; i < urls.length; i += MAX_URLS_PER_IN_QUERY) {
+    const chunk = urls.slice(i, i + MAX_URLS_PER_IN_QUERY);
+
+    // Check the `url` column
+    const { data: byUrl, error: errUrl } = await client
+      .from("articles")
+      .select("url")
+      .in("url", chunk);
+
+    if (errUrl) {
+      throw new Error(`articleUrlsExist (url) failed: ${errUrl.message}`);
+    }
+    for (const row of (byUrl ?? []) as Array<{ url: string }>) {
+      existing.add(row.url);
+    }
+
+    // Check the `canonical_url` column (separate query — avoids joined-table filter gotcha §21)
+    const { data: byCanonical, error: errCanonical } = await client
+      .from("articles")
+      .select("canonical_url")
+      .in("canonical_url", chunk);
+
+    if (errCanonical) {
+      throw new Error(`articleUrlsExist (canonical_url) failed: ${errCanonical.message}`);
+    }
+    for (const row of (byCanonical ?? []) as Array<{ canonical_url: string | null }>) {
+      if (row.canonical_url) existing.add(row.canonical_url);
+    }
+  }
+
+  return existing;
+}
