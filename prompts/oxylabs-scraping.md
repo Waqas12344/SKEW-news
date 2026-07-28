@@ -1,20 +1,37 @@
-# Oxylabs Scraping Pipeline
+# Oxylabs Scraping Pipeline (manual scrape-to-insert)
 
 ## Goal
 
-Implement `POST /api/scrape` — the manual scraping endpoint that runs the full
-scrape-to-insert pipeline defined in AGENTS.md §9 and §16.
+Implement SKEW's **manual scraping pipeline** — the `POST /api/scrape` action route and
+the layered scrape-to-insert engine behind it (AGENTS.md §9 + §16). On demand, it:
 
-The route loads active sources from Supabase, fetches each homepage via Oxylabs,
-extracts article candidate links, filters non-articles, dedupes against the DB,
-scrapes article detail pages, validates each article, and inserts valid rows.
+1. Loads selected active sources from Supabase (all active by default; §8).
+2. Fetches each source's **homepage HTML live through Oxylabs** (`universal` source, Realtime endpoint).
+3. Extracts visible story-card links from the homepage only (§11).
+4. Rejects non-article URLs via the **non-article reject list** and source-specific URL checks (§9/§11/§12).
+5. Normalizes + dedupes candidates, then skips URLs already in Supabase via the **URL existence check** (≤15 per `.in()`; §9).
+6. Scrapes each surviving candidate's **article detail page** through Oxylabs.
+7. Validates + cleans each detail page against the **article content gate** (§13).
+8. Inserts only valid articles, **append-only** (§10) — never a homepage/listing/category page.
+9. Emits **run logging** during the run + a final summary object, returned in the API response and written to `logs`.
+
+**In scope:** the manual scraping engine + `POST /api/scrape` + `GET /api/sources` +
+supporting parsing/scraping/pipeline modules + Cheerio dependency + `.env.example` additions.
+
+**Out of scope (separate tasks):** Oxylabs Scheduler (§18), AI analysis / `POST /api/analyze`
+(§19), pgvector / Related Articles (§20), Vercel Cron (§18).
+
+The pipeline modules are written so the scheduler task (§18) can reuse the exact same
+extract → filter → dedupe → detail-scrape → validate → clean → insert → log logic,
+differing only in where the homepage HTML comes from.
 
 ---
 
 ## Skills Read
 
-- `.agents/skills/oxylabs-web-scraper/SKILL.md`
+- `.agents/skills/oxylabs-web-scraper/SKILL.md` + `examples.md` + `sources.md`
 - `.agents/skills/supabase/SKILL.md`
+- AGENTS.md §5, §7, §8, §9, §10, §11, §12, §13, §14, §15, §16, §17, §21, §22
 
 ---
 
@@ -22,145 +39,154 @@ scrapes article detail pages, validates each article, and inserts valid rows.
 
 | File | Relevant content |
 |---|---|
-| `lib/supabase/queries/sources.ts` | `getActiveSources()` — loads active sources |
+| `lib/supabase/queries/sources.ts` | `getActiveSources()`, `getAllSources()` — reuse for source selection |
 | `lib/supabase/queries/articles.ts` | `getExistingUrls()` (15-chunk), `insertArticle()` |
 | `lib/supabase/queries/logs.ts` | `createLog()` — silent, never throws |
 | `lib/supabase/server.ts` | `createServiceClient()` — service role, server-only |
 | `lib/supabase/types.ts` | `Source`, `InsertArticle`, `InsertLog`, `LogLevel` |
 | `supabase/schema.sql` | `articles.url UNIQUE`, `image_url NOT NULL`, `published_at NOT NULL` |
-| `supabase/seed.sql` | 5 active sources: Reuters, NPR, Fox News, BBC, The Guardian |
-| `package.json` | cheerio, zod, @types/cheerio — NOT installed; must be added |
-| `.env.example` | `OXY_WSA_USERNAME`, `OXY_WSA_PASSWORD`, `BIASLY_ADMIN_SECRET` |
-| `app/` | No `app/api/` directory exists — route is greenfield |
+| `supabase/seed.sql` | 5 active sources: Reuters, NPR, Fox News, BBC, The Guardian; `parser_strategy` is null for all |
+| `package.json` | No `cheerio`, no `zod` — cheerio must be installed; **no zod** (AI validation is §19) |
+| `.env.example` | Missing `OXY_WSA_USERNAME`, `OXY_WSA_PASSWORD`, `Biasly_Admin_Secret` |
+| `proxy.ts` | Clerk middleware; `/api/scrape` not in `isProtectedRoute` — route guards itself via admin secret |
+| `app/` | No `app/api/` directory exists — all routes are greenfield |
 
 ---
 
-## Decisions and Assumptions
+## Decisions / Assumptions
 
-1. **Oxylabs source**: use `"universal"` for all scraping (news sites are not
-   among the 40+ natively parsed sources). No `parse: true`. Raw HTML returned
-   in `results[0].content`.
+1. **Oxylabs client** (`lib/scraping/oxylabs.ts`, server-only): one `fetchHtml(url)` helper →
+   `POST https://realtime.oxylabs.io/v1/queries` with Basic Auth from `OXY_WSA_USERNAME` /
+   `OXY_WSA_PASSWORD`, body `{ source: "universal", url, render: "html" }`.
+   `AbortController` timeout ~180 s. Returns `{ html, statusCode, finalUrl }` from
+   `results[0]`. Throws a typed `OxylabsError` on non-200 / empty content / auth failure.
+   **No credentials ever reach the browser.**
 
-2. **Realtime endpoint**: use `https://realtime.oxylabs.io/v1/queries` for both
-   homepage and article-detail fetches (immediate response, no polling needed).
+2. **Layer separation (§5):** distinct modules — Oxylabs calls (`lib/scraping/oxylabs.ts`),
+   homepage link extraction (`lib/scraping/extract.ts`), candidate URL filtering
+   (`lib/scraping/candidate-url.ts` — single home for the non-article reject list),
+   article detail parsing + cleanup (`lib/scraping/article.ts`), orchestration + logging
+   (`lib/pipeline/scrape.ts`). Route handler stays thin.
 
-3. **Default per-source limit**: 5 valid articles per source as per §16.
-   Request body can override with `sourcesLimit` and `articlesPerSource`.
+3. **Non-article reject list (§9)** lives in exactly one place: `NON_ARTICLE_PATTERNS`
+   constant in `lib/scraping/candidate-url.ts`. Referenced, never duplicated.
 
-4. **Source selection**: always load from Supabase `sources` table — never
-   hardcoded URLs.
+4. **Candidate URL check (§12):** same-host, not homepage/reject-list, looks like a real
+   article (numeric ID, date-based path, or long multi-word slug).
+   Per-host heuristics for the 5 seeded sources:
 
-5. **cheerio + zod must be installed** before implementing the parsing and
-   validation layers.
+   | Source | Allow pattern |
+   |---|---|
+   | Reuters (`reuters.com`) | `/<section>/YYYY-MM-DD/<slug>-<id>` |
+   | NPR (`npr.org`) | `/YYYY/MM/DD/<digits>/<slug>` |
+   | Fox News (`foxnews.com`) | `/<section>/YYYY/MM/DD/<slug>` — reject `/shows|/games|/live|/video` |
+   | BBC (`bbc.com`) | `/news/<topic>-<8+ digits>` or `/news/articles/<slug>` — reject `/sport|/live|/weather` |
+   | The Guardian (`theguardian.com`) | `/<section>/YYYY/mon/dd/<slug>` |
+   | generic | path depth ≥ 3 segments AND last slug ≥ 20 chars |
 
-6. **Parser strategy**: the `sources.parser_strategy` field is nullable. We
-   use a strategy map keyed on the value. If null or unrecognised, fall back to
-   the generic homepage link extractor. Known strategies:
-   - `reuters` — Reuters-specific card selectors
-   - `npr` — NPR-specific card selectors
-   - `foxnews` — Fox News-specific card selectors
-   - `bbc` — BBC-specific card selectors
-   - `guardian` — Guardian-specific card selectors
+   When uncertain → reject (§12: "use the stricter choice").
 
-7. **Article URL regex patterns**: each source has a known article URL pattern
-   stored in the parser strategy map. Use these for candidate filtering (§12).
+5. **URL existence check (§9):** `articleUrlsExist(urls)` in
+   `lib/supabase/queries/articles.ts` chunks input into groups of **≤15** and queries
+   `.in('url', chunk)` per chunk, **also** checks `canonical_url`, returning a `Set` of
+   all known URLs. Never passes >15 to a single `.in()`.
 
-8. **Text extraction**: use Cheerio to strip scripts, styles, nav, footer,
-   header, aside, figure, form, button, noscript, and known ad/newsletter
-   block classes, then join remaining `p` text nodes with double newlines.
-   If that returns < 900 chars, also include `article`, `main`, and `section`
-   block text as fallback. Apply the full cleanup list from §13.
+6. **Article content gate (§13):** after detail-page parse — must have article-specific
+   URL + title, `image_url` (og:image / article `<img>`), `published_at`
+   (article:published_time / `<time datetime>` / JSON-LD `datePublished`), and body
+   passing **either** ≥3 meaningful paragraphs **or** ≥900 cleaned chars. Reject on
+   missing image/date, generic/section title, or body that is mostly nav/captions/ads.
+   Canonical URL is also rejected if it points at a listing/category/program/product page.
 
-9. **Published date**: look in order:
-   - `<meta property="article:published_time" content="…">`
-   - `<time datetime="…">`
-   - `<meta name="date" content="…">`
-   - JSON-LD `datePublished`
-   If none found, reject the article (§13).
+7. **`raw_text` cleanup (§13):** strip `<script>`, `<style>`, ad/newsletter/subscription/
+   related/most-viewed/load-more/social-share blocks, repeated nav labels, inline JS
+   errors, CSS class dumps; collapse whitespace; join real paragraphs with `\n\n`.
 
-10. **Image URL**: look in order:
-    - `<meta property="og:image" content="…">`
-    - `<meta name="twitter:image" content="…">`
-    - `article img[src]` (first)
-    - `main img[src]` (first)
-    If none found, reject the article (§13).
+8. **Canonical URL:** read `<link rel="canonical">` / og:url; reject if it points at a
+   listing/category page. Store both `url` (original) and `canonical_url`; dedupe on both.
 
-11. **Canonical URL**: use `<link rel="canonical" href="…">` if present, else
-    keep the scraped URL as canonical.
+9. **Append-only insert (§10):** insert valid articles one at a time with `analyzed_at`
+   null; on unique-violation (`url`), skip as duplicate — never delete/replace/reset.
 
-12. **Title**: use `<meta property="og:title">` → `<meta name="title">` →
-    `<title>` → `h1`. Reject if it matches generic/category patterns.
+10. **Source selection (§8/§16):** request body `{ sources?: string[] (names or IDs),
+    limitPerSource?: number }`. Default = all active sources, **5 valid articles per
+    source**. Cap candidate detail scrapes per source generously above the target so
+    rejects don't starve the limit; stop once `limitPerSource` valid inserts succeed.
 
-13. **Article validation gate** (§13): accept only if ALL of:
-    - image_url present
-    - published_at present and parseable as a valid date
-    - title is article-specific (not a category/section/homepage name)
-    - body passes the quality gate: ≥ 3 meaningful paragraphs (> 60 chars each)
-      OR ≥ 900 meaningful chars after cleanup
-    - url is article-specific (not a homepage/listing/category URL)
+11. **Admin secret (§15):** `POST /api/scrape` requires header `Biasly_Admin_Secret` ===
+    `process.env.Biasly_Admin_Secret`. Missing/invalid → `401`. Secret never in URL/query,
+    never in browser code.
 
-14. **Non-article reject list** (§9): applied at candidate link stage.
-    Patterns cover category, tag, author, search, show, podcast, live, game,
-    product, corporate, newsletter, and subscription pages.
+12. **HTTP methods (§14):** scrape is `POST`. `GET /api/sources` is read-only (returns
+    active source names/IDs for §8 inspection) — no admin secret required.
 
-15. **Logging**: console.log with structured prefixes AND `createLog()` to DB
-    for key events. Log events: `scrape:started`, `scrape:source:start`,
-    `scrape:homepage:fetched`, `scrape:candidates:found`,
-    `scrape:candidates:rejected`, `scrape:duplicates:skipped`,
-    `scrape:details:scraped`, `scrape:article:inserted`,
-    `scrape:article:rejected`, `scrape:source:error`, `scrape:completed`,
-    `scrape:failed`.
+13. **Run logging (§9):** structured `console.info/warn/error` lines through the run +
+    one final summary object; also persist the summary to `logs` via
+    `createLog({ level: "info", event: "scrape.summary", context: summary })`.
+    Summary returned as the API response body.
 
-16. **Admin secret check**: read `BIASLY_ADMIN_SECRET` from env. Return 401
-    if header `x-biasly-admin-secret` is missing or does not match.
+14. **Resilience:** a single source failing (Oxylabs error, bad HTML) is logged and
+    skipped; the run continues. Per-article failures are counted, never fatal. "Better
+    to insert fewer good articles than bad ones" (§16).
 
-17. **Timeout**: Realtime Oxylabs calls can take up to 180 s. Set a 170 s
-    `AbortSignal.timeout` on each fetch so the Next.js route does not hang
-    indefinitely. The route itself should not exceed Vercel's 60 s limit per
-    source; if a source times out, log it, continue to the next source.
+15. **Server-only boundary (§21):** every new `lib/scraping/*` and `lib/pipeline/*`
+    module starts with `import "server-only"`. Credentials read from `process.env` in
+    server code only.
 
-18. **Zod validation**: validate the request body shape. Validate the
-    article-detail result (image_url, published_at, title present and non-empty)
-    before inserting.
+16. **No `zod`** in this task — validation is done with explicit TypeScript checks.
+    Zod validation of AI output is §19.
+
+17. **No status/polling route (§16/§17):** manual scrape is synchronous — the summary
+    returns in the `POST /api/scrape` response.
+
+18. **Scheduler reuse:** `lib/pipeline/scrape.ts` exports both:
+    - `runManualScrape(options)` — loads sources and calls `fetchHtml` live for homepages
+    - `runSourcePipeline(html, source, options)` — the reusable per-source pipeline that
+      §18 can call by passing pre-fetched Oxylabs job HTML instead of a live fetch
 
 ---
 
 ## Files Likely to Change / Be Created
 
-### New packages to install
-- `cheerio` — HTML parsing
-- `@types/cheerio` — types (may already be bundled)
-- `zod` — validation
+### New package to install
+- `cheerio` (pinned) — HTML parsing; no `zod` needed here
 
 ### New files
+
 | Path | Purpose |
 |---|---|
-| `app/api/scrape/route.ts` | POST /api/scrape handler |
-| `lib/scraping/oxylabs.ts` | Oxylabs fetch wrapper (homepage + detail) |
-| `lib/scraping/parser.ts` | Source-specific homepage link extraction |
-| `lib/scraping/candidate-filter.ts` | Non-article URL rejection |
-| `lib/scraping/article-extractor.ts` | Detail page text/date/image extraction |
-| `lib/scraping/article-validator.ts` | Zod-backed article validation gate |
-| `lib/pipeline/scrape.ts` | Orchestrates the full scrape-to-insert pipeline |
-| `lib/pipeline/types.ts` | Typed pipeline result / run summary |
+| `lib/pipeline/types.ts` | `ScrapeSummary`, `SourceRunResult`, `RejectionReason`, `ScrapeOptions` |
+| `lib/scraping/oxylabs.ts` | Oxylabs Realtime client: `fetchHtml(url)` + `OxylabsError` |
+| `lib/scraping/extract.ts` | `extractCandidateLinks(html, source)` — homepage story-card links via Cheerio |
+| `lib/scraping/candidate-url.ts` | `NON_ARTICLE_PATTERNS`, `normalizeUrl`, `isRejectedUrl`, `isLikelyArticleUrl` |
+| `lib/scraping/article.ts` | `parseArticle(html, url, source)` — detail page extraction + content gate + cleanup |
+| `lib/pipeline/scrape.ts` | `runManualScrape(options)` + `runSourcePipeline(html, source, options)` |
+| `app/api/scrape/route.ts` | Thin `POST` handler — admin secret → parse body → `runManualScrape` → `Response.json` |
+| `app/api/sources/route.ts` | Thin `GET` handler — returns active sources for §8 inspection |
 
 ### Modified files
+
 | Path | Change |
 |---|---|
-| `package.json` | Add cheerio, zod |
+| `lib/supabase/queries/articles.ts` | Add `articleUrlsExist(urls)` checking both `url` and `canonical_url` in ≤15 chunks |
+| `package.json` / `package-lock.json` | Add `cheerio` pinned |
+| `.env.example` | Add `OXY_WSA_USERNAME`, `OXY_WSA_PASSWORD`, `Biasly_Admin_Secret` |
 
 ---
 
 ## Implementation Requirements
 
-### 1. Install packages
-
-```bash
-npm install cheerio zod
+### Constants (centralized in each module)
+```ts
+const DEFAULT_LIMIT_PER_SOURCE = 5;
+const MAX_URLS_PER_IN_QUERY = 15;
+const OXYLABS_TIMEOUT_MS = 180_000;
+const DEFAULT_CANDIDATE_CAP = 30; // max detail pages to scrape per source before stopping
 ```
 
-### 2. `lib/pipeline/types.ts`
+---
 
+### `lib/pipeline/types.ts`
 ```ts
 export interface RejectionReason {
   reason: string;
@@ -179,248 +205,239 @@ export interface SourceRunResult {
   error?: string;
 }
 
-export interface ScrapeRunSummary {
+export interface ScrapeSummary {
   status: "completed" | "failed";
   sourcesChecked: number;
   candidatesFound: number;
   candidatesRejected: number;
   duplicatesSkipped: number;
-  detailsScraped: number;
+  detailPagesScraped: number;
   articlesInserted: number;
   articlesRejected: number;
   articlesFailed: number;
-  totalDurationMs: number;
-  rejectionReasonsByCount: RejectionReason[];
+  durationMs: number;
+  rejectionReasons: RejectionReason[];
   sourceResults: SourceRunResult[];
 }
-```
 
-### 3. `lib/scraping/oxylabs.ts`
-
-- Export `fetchPageHtml(url: string): Promise<string>` — wraps the Oxylabs
-  Realtime API call using Basic auth from `OXY_WSA_USERNAME` / `OXY_WSA_PASSWORD`.
-- Body: `{ source: "universal", url, user_agent_type: "desktop_chrome" }`.
-- Use `fetch` with `Authorization: Basic base64(user:pass)` header.
-- Set `signal: AbortSignal.timeout(170_000)`.
-- Extract `results[0].content` and return it as a string.
-- Throw a typed `OxylabsError` on non-200 HTTP or missing content.
-- Never log credentials.
-
-### 4. `lib/scraping/parser.ts`
-
-Export `extractCandidateLinks(html: string, source: Source): string[]`.
-
-Strategy map keyed on `source.parser_strategy ?? "generic"`:
-
-| strategy | Selector(s) to try |
-|---|---|
-| `reuters` | `a[href]` inside `[class*="story-card"]`, `[class*="media-story-card"]` |
-| `npr` | `a[href]` inside `.story-wrap`, `.item` with `h2 a` or `h3 a` |
-| `foxnews` | `a[href]` inside `.article-list article`, `.content article` |
-| `bbc` | `a[href]` inside `[data-testid="internal-link"]`, `.gs-c-promo-heading a` |
-| `guardian` | `a[href]` inside `[data-link-name="article"]`, `.fc-item__container a` |
-| `generic` | all `a[href]` inside `main`, `article`, `#content`, `.content`, falling back to `body a[href]` |
-
-After collecting raw hrefs:
-- Resolve relative URLs against `source.listing_url` using `new URL(href, base)`.
-- Keep only same-host links.
-- Return deduplicated array of absolute URL strings.
-
-### 5. `lib/scraping/candidate-filter.ts`
-
-Export `filterCandidates(urls: string[], source: Source): { kept: string[]; rejectedCount: number }`.
-
-Apply two layers:
-
-**Layer 1 — non-article reject list** (§9): reject if the URL path matches any of:
-- `/category/`, `/categories/`, `/section/`, `/sections/`, `/topic/`, `/topics/`,
-  `/tag/`, `/tags/`, `/author/`, `/authors/`, `/profile/`, `/search`,
-  `/show/`, `/shows/`, `/program/`, `/programs/`, `/podcast/`, `/podcasts/`,
-  `/live`, `/live-`, `-live/`, `/game/`, `/games/`, `/product/`, `/products/`,
-  `/review/`, `/reviews/`, `/shop/`, `/shopping/`, `/about`, `/contact`,
-  `/terms`, `/privacy`, `/newsletter`, `/subscribe`, `/subscription`,
-  `/corporate`, `/support`, `/help`, `/faq`
-- URL is exactly the source homepage (`listing_url`)
-- URL ends in `/` with a path depth < 2 (homepage-like)
-
-**Layer 2 — source-specific article URL pattern**: each strategy has an allow
-regex. A URL must match to be kept.
-
-| strategy | Allow pattern |
-|---|---|
-| `reuters` | `/[a-z\-]+/\d{4}-\d{2}-\d{2}/` — date-path articles |
-| `npr` | `/\d{4}/\d{2}/\d{2}/\d+/` — NPR story IDs |
-| `foxnews` | `/[a-z\-]+/\d{4}/\d{2}/\d{2}/[a-z0-9\-]+` |
-| `bbc` | `/news/[a-z\-]+-\d{8,}` OR `/news/articles/[a-z0-9\-]+` |
-| `guardian` | `/\d{4}/[a-z]{3}/\d{2}/[a-z0-9\-]+` |
-| `generic` | path length > 3 segments and slug length > 20 chars |
-
-Return only URLs that pass both layers.
-
-### 6. `lib/scraping/article-extractor.ts`
-
-Export `extractArticleData(html: string, url: string, sourceId: string): ExtractedArticle | null`.
-
-```ts
-export interface ExtractedArticle {
-  url: string;
-  canonical_url: string | null;
-  title: string;
-  image_url: string;
-  published_at: string; // ISO string
-  raw_text: string;
-  source_id: string;
-}
-```
-
-Extraction steps (in order):
-
-**canonical_url**: `<link rel="canonical">` → null.
-
-**title**:
-1. `<meta property="og:title">`
-2. `<meta name="title">`
-3. `<title>` (strip site name suffix after ` | ` or ` - `)
-4. First `h1`
-
-**published_at**:
-1. `<meta property="article:published_time">`
-2. `<time[datetime]>` — pick the earliest if multiple
-3. `<meta name="date">`
-4. JSON-LD `@type Article` `datePublished`
-5. If none found → return null (article will be rejected by validator)
-
-**image_url**:
-1. `<meta property="og:image">`
-2. `<meta name="twitter:image">`
-3. First `article img[src]`
-4. First `main img[src]`
-5. If none found → return null (article will be rejected)
-
-**raw_text cleanup** (§13):
-- Use cheerio to load the HTML.
-- Remove: `script`, `style`, `noscript`, `nav`, `header`, `footer`, `aside`,
-  `form`, `button`, `figure` (optional if no figcaption with text), `iframe`,
-  `[class*="ad"]`, `[class*="advert"]`, `[class*="sponsor"]`,
-  `[class*="newsletter"]`, `[class*="subscribe"]`, `[class*="related"]`,
-  `[class*="most-viewed"]`, `[class*="load-more"]`, `[class*="social"]`,
-  `[id*="comments"]`.
-- Collect all `p` text from `article, main, .article-body, .story-body,
-  [class*="article"], [class*="story"]`.
-- Join with `\n\n`. Strip trailing whitespace per line.
-- If result < 900 chars, broaden to `article p, main p, section p`.
-- If still < 900 chars, accept only if paragraph count ≥ 3 (quality gate
-  passes by count, §13).
-- Return the cleaned string.
-
-### 7. `lib/scraping/article-validator.ts`
-
-Export `validateArticle(candidate: Partial<ExtractedArticle>, sourceStrategy: string | null): ValidationResult`.
-
-```ts
-export interface ValidationResult {
-  valid: boolean;
-  reason?: string;
-}
-```
-
-Reject if:
-- `image_url` is null or empty
-- `published_at` is null, empty, or not parseable as a valid `Date`
-- `title` is null, empty, or a generic/category name (< 15 chars or matches
-  known category patterns)
-- `raw_text` body fails both quality tests: < 3 paragraphs AND < 900 chars
-- `url` matches any non-article pattern from the reject list (§9)
-
-Accept if all checks pass.
-
-Use Zod for the final shape check before returning valid.
-
-### 8. `lib/pipeline/scrape.ts`
-
-Export `runScrapePipeline(options: ScrapeOptions): Promise<ScrapeRunSummary>`.
-
-```ts
 export interface ScrapeOptions {
-  sourcesLimit?: number;       // max number of sources to process (default: all)
-  articlesPerSource?: number;  // max valid articles per source (default: 5)
+  sources?: string[];        // source names or IDs to restrict run (default: all active)
+  limitPerSource?: number;   // max valid articles per source (default: 5)
 }
 ```
 
-Pipeline steps (§9):
+---
 
-```
-1. Load active sources from Supabase (getActiveSources), slice to sourcesLimit.
-2. Log scrape:started with source names and options.
-3. For each source:
-   a. Log scrape:source:start.
-   b. fetchPageHtml(source.listing_url) via Oxylabs → raw homepage HTML.
-   c. Log scrape:homepage:fetched.
-   d. extractCandidateLinks(html, source) → candidate URLs.
-   e. Log scrape:candidates:found.
-   f. filterCandidates(candidates, source) → { kept, rejectedCount }.
-   g. Log scrape:candidates:rejected.
-   h. getExistingUrls(kept) → existingSet.
-   i. newCandidates = kept.filter(u => !existingSet.has(u)).
-   j. Log scrape:duplicates:skipped with count.
-   k. For each newCandidate (stop when articlesInserted for this source >= articlesPerSource):
-      i.   fetchPageHtml(candidateUrl) via Oxylabs → detail HTML.
-      ii.  Log scrape:details:scraped.
-      iii. extractArticleData(html, url, source.id).
-      iv.  validateArticle(extracted, source.parser_strategy).
-      v.   If valid: insertArticle → log scrape:article:inserted.
-      vi.  If invalid: log scrape:article:rejected with reason.
-      vii. If fetch/extract throws: log scrape:article:failed.
-   l. Catch source-level error → log scrape:source:error, continue.
-4. Build and return ScrapeRunSummary.
-5. Log scrape:completed with full summary object.
-```
+### `lib/scraping/oxylabs.ts`
+- `import "server-only"` at top
+- Export `fetchHtml(url: string): Promise<OxylabsResult>` where
+  `OxylabsResult = { html: string; statusCode: number; finalUrl: string }`
+- POST to `https://realtime.oxylabs.io/v1/queries`
+- Header: `Authorization: Basic ${btoa(user + ":" + pass)}` + `Content-Type: application/json`
+- Body: `{ source: "universal", url, render: "html" }`
+- Wrap with `AbortController`, abort after `OXYLABS_TIMEOUT_MS`
+- Read `results[0].content` (HTML), `results[0].status_code`, `results[0].url`
+- Throw `OxylabsError` (extends `Error`) with a `code` field on: network error,
+  non-200 Oxylabs HTTP response, missing/empty `content`, or `status_code >= 400`
+- Never log credentials
 
-Console logging format:
-```
-[scrape] Started — sources: Reuters, NPR, Fox News, BBC, The Guardian
-[scrape:Reuters] Fetching homepage...
-[scrape:Reuters] Homepage fetched. Candidates: 28
-[scrape:Reuters] After filtering: 14 kept, 14 rejected
-[scrape:Reuters] After deduplication: 11 new candidates
-[scrape:Reuters] Scraped detail page: https://...
-[scrape:Reuters] Inserted article: "Article Title" (id: uuid)
-[scrape:Reuters] Rejected article: no image — https://...
-[scrape] Completed in 42.3s — inserted: 8, rejected: 6, failed: 1
-```
+---
 
-### 9. `app/api/scrape/route.ts`
+### `lib/scraping/extract.ts`
+- `import "server-only"` at top
+- Export `extractCandidateLinks(html: string, source: Source): string[]`
+- Load HTML with Cheerio
+- Collect `<a href>` from visible story/headline containers — **not** nav/menu/footer/aside/
+  subscription regions
+- Generic fallback selectors: `main a[href]`, `article a[href]`, `#content a[href]`,
+  `.content a[href]`, then `body a[href]` as last resort
+- Absolutize relative hrefs against `source.listing_url` using `new URL(href, base).href`
+- Keep only same-host links (compare `new URL(href).hostname` to source host)
+- Return deduplicated array (via `Set`)
 
+---
+
+### `lib/scraping/candidate-url.ts`
+- `import "server-only"` at top
+- Define `NON_ARTICLE_PATTERNS: RegExp[]` — canonical single list per §9:
+  - Category/section: `/\/(category|categories|section|sections)\//i`
+  - Topic/tag: `/\/(topic|topics|tag|tags)\//i`
+  - Author/profile: `/\/(author|authors|profile|profiles)\//i`
+  - Search: `/\/search(\?|\/|$)/i`
+  - Show/program/podcast: `/\/(show|shows|program|programs|podcast|podcasts)\//i`
+  - Live: `/\/(live|live-[a-z]|-live\/)/i`
+  - Game: `/\/(game|games)\//i`
+  - Product/review/shop: `/\/(product|products|review|reviews|shop|shopping)\//i`
+  - Corporate/support: `/\/(about|contact|terms|privacy|corporate|support|help|faq)(\/|$)/i`
+  - Newsletter/subscribe: `/\/(newsletter|subscribe|subscription)\//i`
+  - Navigation depth < 2: path split by `/` with fewer than 2 real segments
+- Export `normalizeUrl(url: string): string` — strip fragment, strip known tracking
+  query params (`utm_*`, `ref`, `source`, `campaign`), strip trailing slash
+- Export `isRejectedUrl(url: string, sourceListingUrl: string): boolean` — true if URL
+  equals the homepage OR matches any `NON_ARTICLE_PATTERNS`
+- Export `isLikelyArticleUrl(url: string, sourceHostname: string): boolean` — per-host
+  heuristics as documented in Decisions §4, plus generic fallback (path depth ≥ 3 AND
+  last slug ≥ 20 chars)
+- Export `filterCandidates(urls: string[], source: Source): { kept: string[]; rejectedCount: number }`
+  — applies normalize → isRejectedUrl → isLikelyArticleUrl
+
+---
+
+### `lib/scraping/article.ts`
+- `import "server-only"` at top
+- Export:
+  ```ts
+  export interface ParsedArticle {
+    url: string;
+    canonical_url: string | null;
+    title: string;
+    image_url: string;
+    published_at: string;   // ISO string
+    raw_text: string;
+    source_id: string;
+  }
+  export interface ParseFailure {
+    url: string;
+    reason: string;
+  }
+  export type ParseResult = { ok: true; article: ParsedArticle } | { ok: false; failure: ParseFailure };
+  ```
+- Export `parseArticle(html: string, url: string, source: Source): ParseResult`
+
+**Extraction order:**
+
+`canonical_url`:
+1. `<link rel="canonical" href>`
+2. `<meta property="og:url" content>`
+3. null — keep original `url`
+Reject if canonical points at a listing/category/program/product page.
+
+`title`:
+1. `<meta property="og:title" content>`
+2. `<meta name="title" content>`
+3. `<title>` text, strip ` | site` or ` - site` suffix
+4. First `h1` text
+Reject if title is < 15 chars, all caps section name, or matches known category patterns.
+
+`published_at`:
+1. `<meta property="article:published_time" content>`
+2. `<time[datetime]>` — pick earliest ISO-8601 value
+3. `<meta name="date" content>`
+4. JSON-LD `<script type="application/ld+json">` → `datePublished` where `@type` includes `Article`
+5. If none found → ParseFailure("missing published_at")
+
+`image_url`:
+1. `<meta property="og:image" content>`
+2. `<meta name="twitter:image" content>`
+3. First `article img[src]` (skip data URIs and < 100px width)
+4. First `main img[src]`
+5. If none found → ParseFailure("missing image_url")
+
+`raw_text` cleanup (§13):
+1. Remove from DOM: `script, style, noscript, nav, header, footer, aside, form, button,
+   iframe, [class*="ad"], [class*="advert"], [class*="sponsor"], [class*="newsletter"],
+   [class*="subscribe"], [class*="related"], [class*="most-viewed"], [class*="load-more"],
+   [class*="social"], [id*="comments"], [class*="cookie"], [class*="promo"]`
+2. Collect `p` text from `article, main, .article-body, .story-body,
+   [class*="article__body"], [class*="story__body"]` — join with `\n\n`
+3. If result < 900 chars, broaden to `article p, main p, section p`
+4. Strip lines that are purely nav labels, URLs, or < 20 chars
+5. Collapse multiple blank lines to one
+
+**Content gate:**
+- Fail if `raw_text` has < 3 meaningful paragraphs (lines > 60 chars) AND < 900 chars total
+
+---
+
+### `lib/supabase/queries/articles.ts` — additions
+Add `articleUrlsExist(urls: string[]): Promise<Set<string>>`:
+- Chunks into groups of `MAX_URLS_PER_IN_QUERY = 15`
+- Per chunk: query `url` column with `.in('url', chunk)` AND separately query
+  `canonical_url` column with `.in('canonical_url', chunk)` (two separate queries per chunk)
+- Union all results into a single `Set<string>` and return
+- On query error, throw with a descriptive message
+
+---
+
+### `lib/pipeline/scrape.ts`
+- `import "server-only"` at top
+- Export `runSourcePipeline(html: string, source: Source, limitPerSource: number, rejectionLog: Map<string, number>): Promise<SourceRunResult>`
+  — the reusable per-source pipeline (§18 reuse). Takes pre-fetched homepage HTML:
+  1. `extractCandidateLinks(html, source)` → raw candidates
+  2. `filterCandidates(candidates, source)` → `{ kept, rejectedCount }`
+  3. `articleUrlsExist(kept)` → `existingSet`
+  4. `newCandidates = kept.filter(u => !existingSet.has(u))`.slice up to `DEFAULT_CANDIDATE_CAP`
+  5. For each `newCandidate` (stop at `limitPerSource` valid inserts):
+     - `fetchHtml(candidateUrl)` → detail HTML
+     - `parseArticle(html, url, source)` → `ParseResult`
+     - If ok: `insertArticle(...)` — on unique-constraint error, count as duplicate
+     - If failure: increment rejected count, record reason in `rejectionLog`
+     - On fetch/parse throws: increment failed count
+  6. Return `SourceRunResult`
+
+- Export `runManualScrape(options: ScrapeOptions): Promise<ScrapeSummary>`
+  1. `getActiveSources()` → filter by `options.sources` (match name or id) if provided
+  2. Console: `[scrape] Started — sources: X, Y, Z`
+  3. For each source:
+     - Console: `[scrape:SourceName] Fetching homepage…`
+     - `fetchHtml(source.listing_url)` → homepage HTML
+     - Console: `[scrape:SourceName] Homepage fetched. Running pipeline…`
+     - `runSourcePipeline(html, source, limitPerSource, rejectionLog)`
+     - Console: `[scrape:SourceName] Done — inserted: N, rejected: M, failed: K`
+     - On source-level error: console.error + log to DB, continue
+  4. Aggregate into `ScrapeSummary`
+  5. Console: `[scrape] Completed in Xs — inserted: N, rejected: M, failed: K`
+  6. `createLog({ level: "info", event: "scrape.summary", context: summary })`
+  7. Return summary
+
+---
+
+### `app/api/scrape/route.ts`
 ```ts
+import "server-only";
 import { NextRequest, NextResponse } from "next/server";
-import { runScrapePipeline } from "@/lib/pipeline/scrape";
+import { runManualScrape } from "@/lib/pipeline/scrape";
+import type { ScrapeOptions } from "@/lib/pipeline/types";
 
-export const maxDuration = 300; // Vercel Pro/Hobby max
+export const maxDuration = 300;
 
 export async function POST(req: NextRequest) {
-  // 1. Admin secret check (§15)
-  const secret = req.headers.get("x-biasly-admin-secret");
-  if (!secret || secret !== process.env.BIASLY_ADMIN_SECRET) {
+  const secret = req.headers.get("Biasly_Admin_Secret");
+  if (!secret || secret !== process.env.Biasly_Admin_Secret) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  // 2. Parse optional body
-  let sourcesLimit: number | undefined;
-  let articlesPerSource = 5;
+  let options: ScrapeOptions = {};
   try {
-    const body = await req.json().catch(() => ({}));
-    if (typeof body.sourcesLimit === "number") sourcesLimit = body.sourcesLimit;
-    if (typeof body.articlesPerSource === "number") articlesPerSource = body.articlesPerSource;
+    const body = await req.json();
+    if (Array.isArray(body.sources)) options.sources = body.sources;
+    if (typeof body.limitPerSource === "number") options.limitPerSource = body.limitPerSource;
   } catch {
-    // ignore parse errors — body is optional
+    // body is optional — default options are fine
   }
 
-  // 3. Run pipeline
-  const summary = await runScrapePipeline({ sourcesLimit, articlesPerSource });
+  try {
+    const summary = await runManualScrape(options);
+    return NextResponse.json(summary, { status: 200 });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Pipeline error";
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+}
+```
 
-  return NextResponse.json(summary, {
-    status: summary.status === "completed" ? 200 : 500,
-  });
+---
+
+### `app/api/sources/route.ts`
+```ts
+import { NextResponse } from "next/server";
+import { getActiveSources } from "@/lib/supabase/queries/sources";
+
+export async function GET() {
+  const sources = await getActiveSources();
+  return NextResponse.json(
+    sources.map((s) => ({ id: s.id, name: s.name, listing_url: s.listing_url }))
+  );
 }
 ```
 
@@ -428,29 +445,28 @@ export async function POST(req: NextRequest) {
 
 ## Security Requirements
 
-- `BIASLY_ADMIN_SECRET` read only from `process.env` on the server. Never sent
-  to the client or logged.
-- `OXY_WSA_USERNAME` / `OXY_WSA_PASSWORD` used only inside `lib/scraping/oxylabs.ts`
-  (server-only module). Never logged or returned in API responses.
-- `lib/scraping/oxylabs.ts` must import `"server-only"` at the top.
-- `lib/pipeline/scrape.ts` must import `"server-only"` at the top.
-- All Supabase writes use the service-role client, never the anon key.
+- `OXY_WSA_USERNAME`, `OXY_WSA_PASSWORD`, `Biasly_Admin_Secret` are **server-only** — read
+  from `process.env` only in server modules; never `NEXT_PUBLIC_`, never in a client
+  component, never in a response body.
+- All `lib/scraping/*` and `lib/pipeline/*` modules start with `import "server-only"`.
+- `POST /api/scrape` rejects missing/invalid `Biasly_Admin_Secret` with `401` before
+  doing any work. Secret is a header, never a query param.
+- No Oxylabs call, scraping, or insert runs from browser code (§21).
+- Error responses never echo credentials, the admin secret, or Oxylabs auth details.
+- Scraping writes are append-only; the pipeline never deletes/updates existing article rows.
 
 ---
 
 ## Acceptance Criteria
 
-1. `POST /api/scrape` with a valid `x-biasly-admin-secret` header returns 200
-   and a `ScrapeRunSummary` JSON object.
-2. `POST /api/scrape` without the secret returns 401.
-3. Articles already in the DB are skipped (dedupe works — second scrape inserts 0
-   duplicates).
-4. Articles missing `image_url` or `published_at` are rejected and logged.
-5. Non-article candidate URLs (category, tag, author, etc.) are filtered before
-   detail scraping.
-6. The terminal running the dev server shows structured console log output for
-   every meaningful pipeline event.
-7. `npm run typecheck` and `npm run lint` pass with no errors.
+1. `POST /api/scrape` with valid `Biasly_Admin_Secret` runs the full pipeline and returns `ScrapeSummary` JSON; dev-server terminal shows structured run log + final summary object.
+2. Missing/invalid admin secret → `401`, no scraping performed.
+3. Only valid article detail pages are inserted — homepages, listing/category/topic/show/live/product pages never stored as articles.
+4. Duplicates (existing `url` or `canonical_url`) are skipped, not re-inserted; existing rows untouched (append-only).
+5. Every inserted article has non-empty `title`, real `image_url`, real `published_at`, clean `raw_text`, and `analyzed_at` null.
+6. `GET /api/sources` returns active sources (id, name, listing_url) with no secret required.
+7. No Oxylabs credentials or admin secret in the client bundle or any response body.
+8. `npm run typecheck`, `npm run lint`, `npm run build` all pass.
 
 ---
 
@@ -459,36 +475,54 @@ export async function POST(req: NextRequest) {
 ```bash
 npm run typecheck
 npm run lint
+npm run build
 ```
 
 ---
 
 ## Manual Test Steps
 
-1. Start the dev server: `npm run dev` (watch this terminal for pipeline logs).
-2. Confirm `BIASLY_ADMIN_SECRET`, `OXY_WSA_USERNAME`, `OXY_WSA_PASSWORD` are
-   set in `.env.local`.
-3. Run a full scrape (all sources, 5 articles each):
+Prereqs: `.env.local` has `Biasly_Admin_Secret`, `OXY_WSA_USERNAME`, `OXY_WSA_PASSWORD`,
+and the Supabase vars; schema + seed already applied (5 active sources).
+Run `npm run dev` and **watch the dev-server terminal** — scrape progress logs there (§17).
 
-```powershell
-Invoke-RestMethod -Method POST `
-  -Uri "http://localhost:3000/api/scrape" `
-  -Headers @{ "x-biasly-admin-secret" = "YOUR_SECRET"; "Content-Type" = "application/json" } `
-  -Body '{"articlesPerSource": 5}'
-```
-
-Or with curl (if available):
+**1. Inspect sources (§8):**
 ```bash
-curl -X POST http://localhost:3000/api/scrape \
-  -H "x-biasly-admin-secret: YOUR_SECRET" \
-  -H "Content-Type: application/json" \
-  -d '{"articlesPerSource": 5}'
+curl http://localhost:3000/api/sources
+```
+Expect 5 sources with id, name, listing_url.
+
+**2. Missing secret → 401:**
+```powershell
+Invoke-RestMethod -Method POST -Uri "http://localhost:3000/api/scrape" `
+  -Headers @{ "Content-Type" = "application/json" } -Body '{}'
+```
+Expect 401, no scraping in terminal.
+
+**3. Scrape specific sources:**
+```powershell
+Invoke-RestMethod -Method POST -Uri "http://localhost:3000/api/scrape" `
+  -Headers @{ "Biasly_Admin_Secret" = "YOUR_SECRET"; "Content-Type" = "application/json" } `
+  -Body '{"sources":["Reuters","NPR","BBC"],"limitPerSource":5}'
+```
+Watch terminal for per-source logs. Response body = `ScrapeSummary`.
+
+**4. Default scrape (all active, 5 each):**
+```powershell
+Invoke-RestMethod -Method POST -Uri "http://localhost:3000/api/scrape" `
+  -Headers @{ "Biasly_Admin_Secret" = "YOUR_SECRET"; "Content-Type" = "application/json" } `
+  -Body '{}'
 ```
 
-4. Check the dev server terminal — you should see per-source progress logs.
-5. Check the JSON response — look for `status: "completed"`, `articlesInserted > 0`.
-6. Run scrape a second time — `articlesInserted` should be 0 (all duplicates).
-7. Check Supabase Dashboard → Table Editor → articles — new rows should appear.
-8. Test 401: remove the header → expect `{"error":"Unauthorized"}` with status 401.
-9. Limit to 1 source: add `"sourcesLimit": 1` to body — only one source is
-   processed.
+**5. Verify in Supabase** — Table Editor → `articles`: rows with non-null `image_url`,
+`published_at`, clean `raw_text`, `analyzed_at` null. Check `logs` for `scrape.summary` row.
+
+**6. Idempotency:** re-run step 3 → `articlesInserted` ≈ 0 (all duplicates), existing rows unchanged.
+
+**7. Note:** articles won't appear on the home page yet — that requires AI analysis (§19).
+Confirm via DB, not `/`.
+
+**8. Re-run checks:**
+```bash
+npm run typecheck && npm run lint && npm run build
+```
