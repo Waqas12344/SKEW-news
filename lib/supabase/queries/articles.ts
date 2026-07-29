@@ -1,5 +1,5 @@
 import { createServiceClient } from "../server";
-import type { ArticleWithRelations, InsertArticle } from "../types";
+import type { ArticleWithRelations, InsertArticle, InsertArticleAnalysis } from "../types";
 
 /**
  * Returns analyzed articles for the home feed, newest first.
@@ -180,4 +180,58 @@ export async function articleUrlsExist(urls: string[]): Promise<Set<string>> {
   }
 
   return existing;
+}
+
+/**
+ * Returns articles that have no article_analyses row yet (pending analysis).
+ * Uses LEFT JOIN + JS filter per §19 pending-analysis check.
+ * Only selects article_analyses(id) — lightweight, avoids full row fetch.
+ * Never relies on analyzed_at IS NULL alone.
+ */
+export async function getPendingArticles(limit?: number): Promise<ArticleWithRelations[]> {
+  const { data, error } = await createServiceClient()
+    .from("articles")
+    .select("*, sources(name, logo_url), article_analyses(id)")
+    .order("created_at", { ascending: true });
+
+  if (error) {
+    throw new Error(`getPendingArticles failed: ${error.message}`);
+  }
+
+  const rows = (data ?? []) as unknown as ArticleWithRelations[];
+
+  // Keep only rows with no analysis row (§19 pending-analysis check)
+  const pending = rows.filter((row) => {
+    const analyses = Array.isArray(row.article_analyses)
+      ? row.article_analyses
+      : row.article_analyses
+      ? [row.article_analyses]
+      : [];
+    return analyses.length === 0;
+  });
+
+  return limit !== undefined ? pending.slice(0, limit) : pending;
+}
+
+/**
+ * Saves an article analysis row and sets analyzed_at on the article.
+ * analyzed_at is set ONLY after a successful insert (§19 rule 6).
+ * Throws on any DB error — caller catches and counts as failed.
+ */
+export async function saveAnalysis(
+  articleId: string,
+  insert: InsertArticleAnalysis
+): Promise<void> {
+  const client = createServiceClient();
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { error: insertError } = await (client.from("article_analyses") as any)
+    .insert(insert);
+
+  if (insertError) {
+    throw new Error(`saveAnalysis insert failed: ${insertError.message}`);
+  }
+
+  // Only set analyzed_at after the analysis row is confirmed saved
+  await updateArticleAnalyzedAt(articleId);
 }

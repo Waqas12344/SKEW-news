@@ -40,3 +40,25 @@ export interface ScrapeOptions {
   /** Max valid articles to insert per source. Default: 5. */
   limitPerSource?: number;
 }
+
+// =============================================================================
+// Analysis pipeline types (§19)
+// =============================================================================
+
+export interface AnalyzeOptions {
+  /** Max articles to analyze in this run. Default: all pending. */
+  limit?: number;
+  /** Analyze only these article IDs. Default: all pending. */
+  articleIds?: string[];
+}
+
+export interface AnalysisSummary {
+  status: "completed" | "failed";
+  pendingFound: number;
+  analyzed: number;
+  skipped: number;
+  failed: number;
+  durationMs: number;
+  batchCount: number;
+  failures: Array<{ articleId: string; title: string; error: string }>;
+}
