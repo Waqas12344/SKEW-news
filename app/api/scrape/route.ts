@@ -9,7 +9,7 @@ export const maxDuration = 300;
 
 /**
  * POST /api/scrape — manual scraping endpoint (§16)
- * Requires x-skew-admin-secret header (§15).
+ * Requires Biasly_Admin_Secret header (§15).
  * Runs the full scrape-to-insert pipeline for selected sources.
  * Returns ScrapeSummary JSON.
  */

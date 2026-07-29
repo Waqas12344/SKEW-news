@@ -9,7 +9,7 @@ export const maxDuration = 300;
 
 /**
  * POST /api/analyze — AI analysis endpoint (§19)
- * Requires x-skew-admin-secret header (§15).
+ * Requires Biasly_Admin_Secret header (§15).
  * Analyzes all pending articles by default; respects limit and articleIds.
  * Returns AnalysisSummary JSON.
  */

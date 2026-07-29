@@ -8,7 +8,7 @@ Your job is to understand the request, use the right project skills, create a cl
 
 # This is NOT the Next.js you know
 
-This version has breaking changes â€” APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` before writing any code. Heed deprecation notices.
+This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` before writing any code. Heed deprecation notices.
 
 <!-- END:nextjs-agent-rules -->
 
@@ -70,7 +70,7 @@ Use them for:
 - `clerk`: authentication and protected routes
 - `supabase`: schema, migrations, queries, service role usage, dedupe, logs, pgvector
 - `oxylabs-web-scraper`: Oxylabs Web Scraper API, Scheduler, scheduled jobs, scraping behavior
-- `ai-sdk`: Vercel AI SDK and OpenAI provider usage, model calls, AI analysis output handling
+- `ai-sdk`: Vercel AI SDK and Google provider (Gemini) usage, model calls, AI analysis output handling
 
 Do not invent new skills.
 
@@ -134,7 +134,7 @@ Use:
 - Oxylabs Scheduler
 - Cheerio
 - Vercel AI SDK
-- OpenAI provider
+- Google provider (Gemini)
 - Zod
 - Tailwind CSS
 - shadcn/ui
@@ -192,10 +192,10 @@ Each article analysis should store:
 
 - article reference
 - neutral summary
-- sentiment score (âˆ’1 to 1) and sentiment label (positive / neutral / negative)
-- bias score (âˆ’1 to 1, derived as `(right_percentage âˆ’ left_percentage) / 100`)
-- bias label (left / center / right / mixed / unclear â€” see section 19)
-- left percentage, center percentage, right percentage (each 0â€“100, must sum to 100)
+- sentiment score (−1 to 1) and sentiment label (positive / neutral / negative)
+- bias score (−1 to 1, derived as `(right_percentage − left_percentage) / 100`)
+- bias label (left / center / right / mixed / unclear — see section 19)
+- left percentage, center percentage, right percentage (each 0–100, must sum to 100)
 - confidence (0 to 1)
 - framing notes
 - loaded terms
@@ -204,7 +204,7 @@ Each article analysis should store:
 
 The `embedding vector(1536)` column is added to `article_analyses` in section 20 after pgvector is enabled. Do not include it in the initial schema.
 
-When any of these fields are added or changed, update `supabase/schema.sql`, `lib/supabase/types.ts`, and run the corresponding ALTER SQL in Supabase Dashboard â†’ SQL Editor before testing.
+When any of these fields are added or changed, update `supabase/schema.sql`, `lib/supabase/types.ts`, and run the corresponding ALTER SQL in Supabase Dashboard → SQL Editor before testing.
 
 - name
 - homepage URL (listing_url)
@@ -237,7 +237,7 @@ Source URLs from Supabase are **homepage entry pages only**.
 This is the canonical scrape-to-insert flow. Both manual scraping (section 16) and scheduler processing (section 18) run these exact steps and differ only in how they are triggered and where the homepage HTML comes from:
 
 1. Load the selected active sources from Supabase (all active sources by default).
-2. Obtain each source's homepage HTML â€” manual scraping fetches the stored homepage URL live through Oxylabs; scheduler processing uses completed Oxylabs job results (section 18). Never crawl into sublinks to find more listing pages.
+2. Obtain each source's homepage HTML — manual scraping fetches the stored homepage URL live through Oxylabs; scheduler processing uses completed Oxylabs job results (section 18). Never crawl into sublinks to find more listing pages.
 3. Extract candidate links from visible homepage story cards only (section 11).
 4. Reject anything on the **non-article reject list** before detail scraping.
 5. Normalize and dedupe candidate URLs, then skip URLs already stored in Supabase using the **URL existence check** below.
@@ -248,11 +248,11 @@ This is the canonical scrape-to-insert flow. Both manual scraping (section 16) a
 
 ## Shared pipeline rules
 
-Named rules reused by sections 16 and 18 â€” defined once here:
+Named rules reused by sections 16 and 18 — defined once here:
 
-- **URL existence check** â€” when checking which candidate URLs already exist in Supabase, query in small chunks and never pass more than 15 URLs to a single `.in()` filter.
-- **Article content gate** â€” save an article only if it has meaningful body content, an image URL, and a published date. Full accept/reject criteria and `raw_text` cleanup live in section 13.
-- **Run logging** â€” log neat server-side console messages during the run (scrape started, selected sources, per-source start, homepage fetched, candidate links found, candidates rejected before detail scrape, duplicates skipped, detail pages scraped, articles inserted, articles rejected after validation, source-level errors, scrape completed or failed) and, at the end, a summary object with: status, sources checked, candidates found, candidates rejected, duplicates skipped, detail pages scraped, articles inserted, articles rejected, articles failed, total duration, and rejection reasons grouped by count.
+- **URL existence check** — when checking which candidate URLs already exist in Supabase, query in small chunks and never pass more than 15 URLs to a single `.in()` filter.
+- **Article content gate** — save an article only if it has meaningful body content, an image URL, and a published date. Full accept/reject criteria and `raw_text` cleanup live in section 13.
+- **Run logging** — log neat server-side console messages during the run (scrape started, selected sources, per-source start, homepage fetched, candidate links found, candidates rejected before detail scrape, duplicates skipped, detail pages scraped, articles inserted, articles rejected after validation, source-level errors, scrape completed or failed) and, at the end, a summary object with: status, sources checked, candidates found, candidates rejected, duplicates skipped, detail pages scraped, articles inserted, articles rejected, articles failed, total duration, and rejection reasons grouped by count.
 
 ## Non-article reject list
 
@@ -295,7 +295,7 @@ When scraping a source homepage, do not collect every link.
 
 Extract only visible story/article card links from the homepage content.
 
-Ignore everything on the **non-article reject list** (section 9) â€” navigation, menus, footers, section/category/topic links, show, game, live, newsletter, corporate, support, product/review, and subscription pages.
+Ignore everything on the **non-article reject list** (section 9) — navigation, menus, footers, section/category/topic links, show, game, live, newsletter, corporate, support, product/review, and subscription pages.
 
 Before detail scraping, each candidate URL must pass a source-specific article URL check.
 
@@ -391,9 +391,9 @@ Use `GET` only for read/status routes:
 - `GET /api/oxylabs/schedules`
 - `GET /api/oxylabs/runs`
 
-One exception â€” the Vercel Cron route uses `GET` because Vercel Cron always sends GET requests:
+One exception — the Vercel Cron route uses `GET` because Vercel Cron always sends GET requests:
 
-- `GET /api/cron/pipeline` â€” internal only, protected by `CRON_SECRET`, not callable by browsers or users
+- `GET /api/cron/pipeline` — internal only, protected by `CRON_SECRET`, not callable by browsers or users
 
 Do not switch scraping or AI analysis between `GET` and `POST`.
 
@@ -447,13 +447,13 @@ Scheduler should scrape source homepages only.
 
 ## Oxylabs Scheduler API
 
-Before implementing Oxylabs Scheduler, always fetch the current API documentation from `https://developers.oxylabs.io/products/web-scraper-api/features/scheduler`. Do not assume endpoint paths, request body fields, or response field names from memory â€” consult the live docs first.
+Before implementing Oxylabs Scheduler, always fetch the current API documentation from `https://developers.oxylabs.io/products/web-scraper-api/features/scheduler`. Do not assume endpoint paths, request body fields, or response field names from memory — consult the live docs first.
 
-## Large integer precision â€” critical
+## Large integer precision — critical
 
 Oxylabs `schedule_id` and job `id` values are large 64-bit integers that exceed JavaScript's `Number.MAX_SAFE_INTEGER`. Parsing them with `JSON.parse` silently corrupts the last digits, producing a wrong ID that Oxylabs will not recognise.
 
-Always read these IDs from the raw HTTP response text before any `JSON.parse` call â€” use string extraction or regex on the raw text to capture the exact digit sequence. Never convert a parsed JavaScript number back to a string; precision is already lost at parse time.
+Always read these IDs from the raw HTTP response text before any `JSON.parse` call — use string extraction or regex on the raw text to capture the exact digit sequence. Never convert a parsed JavaScript number back to a string; precision is already lost at parse time.
 
 ## Use /runs not /jobs for processing
 
@@ -475,8 +475,8 @@ The sync route must:
 
 Creating Oxylabs schedules and configuring Vercel Cron are two independent one-time steps. Neither one triggers the other.
 
-- `POST /api/oxylabs/schedules` â€” tells Oxylabs what to scrape hourly. Done once per source set.
-- Vercel Cron config â€” tells Vercel to call `/api/cron/pipeline` at :15 past every hour. Done once via `vercel.json`.
+- `POST /api/oxylabs/schedules` — tells Oxylabs what to scrape hourly. Done once per source set.
+- Vercel Cron config — tells Vercel to call `/api/cron/pipeline` at :15 past every hour. Done once via `vercel.json`.
 
 Both must be completed for the pipeline to be fully automatic. Until Vercel Cron is configured, the process route must be called manually.
 
@@ -485,7 +485,7 @@ Articles only appear on the homepage after `analyzed_at` is set. Until analysis 
 Process scheduled results by running the **scrape-to-insert pipeline** (section 9), with these scheduler differences:
 
 - Create or update Oxylabs schedules from active source homepages before processing.
-- The homepage HTML comes from completed Oxylabs job results â€” fetch via `/runs`, use only `result_status === 'done'` (see above), and parse that HTML instead of doing a live homepage fetch.
+- The homepage HTML comes from completed Oxylabs job results — fetch via `/runs`, use only `result_status === 'done'` (see above), and parse that HTML instead of doing a live homepage fetch.
 - Do not save raw scheduled homepage results as articles.
 - Do not duplicate pipeline logic inside Scheduler; reuse the same validation, cleanup, dedupe, **URL existence check**, and **run logging** as manual scraping (section 9).
 
@@ -500,9 +500,9 @@ The automatic pipeline flow is:
 1. Oxylabs Scheduler runs its jobs at the top of every hour.
 2. A Vercel Cron Job fires 15 minutes later to give Oxylabs time to finish.
 3. The cron triggers `/api/cron/pipeline`, which runs both steps in sequence.
-4. Step one: process scheduled results â€” fetch completed Oxylabs job HTML, extract candidate links, reject non-article URLs, dedupe, scrape article detail pages, validate, and insert valid articles.
+4. Step one: process scheduled results — fetch completed Oxylabs job HTML, extract candidate links, reject non-article URLs, dedupe, scrape article detail pages, validate, and insert valid articles.
 5. Step two: immediately run AI analysis on all newly inserted articles that are still pending analysis.
-6. If step one fails, step two must still run â€” there may be pre-existing unanalyzed articles.
+6. If step one fails, step two must still run — there may be pre-existing unanalyzed articles.
 7. Log progress and completion for both steps.
 
 The cron route is internal only and must not be callable by browsers or users.
@@ -515,17 +515,17 @@ Do not use `BIASLY_ADMIN_SECRET` to protect the cron route. Do not add `CRON_SEC
 
 When implementing Oxylabs Scheduler, always deliver all parts together:
 
-- Sync schedules route â€” creates one Oxylabs schedule per active source
-- List schedules route â€” reads stored schedule rows
-- Manual process route â€” allows on-demand processing
-- Vercel Cron config â€” registers the automatic hourly trigger
-- Cron pipeline route â€” chains scheduled result processing then AI analysis
+- Sync schedules route — creates one Oxylabs schedule per active source
+- List schedules route — reads stored schedule rows
+- Manual process route — allows on-demand processing
+- Vercel Cron config — registers the automatic hourly trigger
+- Cron pipeline route — chains scheduled result processing then AI analysis
 
 Scheduler processing must use the same validation, cleanup, dedupe, and console summary logging as manual scraping.
 
 # 19. AI analysis and UI framing
 
-AI analysis must process valid articles missing analysis, detected by the **pending-analysis check** in the Required behavior list below â€” based on the actual state of `article_analyses`, not `analyzed_at` alone.
+AI analysis must process valid articles missing analysis, detected by the **pending-analysis check** in the Required behavior list below — based on the actual state of `article_analyses`, not `analyzed_at` alone.
 
 AI analysis must be triggered with `POST /api/analyze`.
 
@@ -548,18 +548,18 @@ Batching is allowed only to avoid timeouts.
 
 Each analysis must include and save to `article_analyses`:
 
-- neutral summary â†’ `summary`
-- sentiment score â†’ `sentiment_score`, sentiment label â†’ `sentiment_label`
-- AI-estimated political framing label â†’ `bias_label`
-- left percentage â†’ `left_percentage`
-- center percentage â†’ `center_percentage`
-- right percentage â†’ `right_percentage`
-- derived bias score â†’ `bias_score` (computed as `(right_percentage âˆ’ left_percentage) / 100`)
-- confidence â†’ `confidence`
-- framing notes â†’ `framing_notes`
-- loaded terms â†’ `loaded_terms`
-- disclaimer â†’ `disclaimer`
-- model name â†’ `model`
+- neutral summary → `summary`
+- sentiment score → `sentiment_score`, sentiment label → `sentiment_label`
+- AI-estimated political framing label → `bias_label`
+- left percentage → `left_percentage`
+- center percentage → `center_percentage`
+- right percentage → `right_percentage`
+- derived bias score → `bias_score` (computed as `(right_percentage − left_percentage) / 100`)
+- confidence → `confidence`
+- framing notes → `framing_notes`
+- loaded terms → `loaded_terms`
+- disclaimer → `disclaimer`
+- model name → `model`
 
 Embedding generation is added in section 20 after pgvector is enabled.
 
@@ -578,7 +578,7 @@ Framing output rules:
 
 Required behavior:
 
-1. **Pending-analysis check** â€” detect pending articles by LEFT JOINing `articles` to `article_analyses`. Never rely on `analyzed_at IS NULL` alone â€” `analyzed_at` can be set while the `article_analyses` row is absent (e.g. after manual deletion). An article is pending when no `article_analyses` row exists for it.
+1. **Pending-analysis check** — detect pending articles by LEFT JOINing `articles` to `article_analyses`. Never rely on `analyzed_at IS NULL` alone — `analyzed_at` can be set while the `article_analyses` row is absent (e.g. after manual deletion). An article is pending when no `article_analyses` row exists for it.
 2. Process in configurable batches.
 3. Continue until no pending articles remain for full analysis runs.
 4. Validate AI output before saving.
@@ -609,7 +609,7 @@ This section is implemented after AI analysis is working (section 19). pgvector 
 
 Enable pgvector in Supabase Dashboard under Database Extensions. Then add an `embedding vector(1536)` column to `article_analyses` and create an IVFFlat cosine index on it via the SQL Editor. Update `supabase/schema.sql`, `lib/supabase/types.ts`, and run the ALTER SQL before testing.
 
-Update the `/api/analyze` route to also call OpenAI text-embedding-3-small for each article alongside the existing analysis call and save the result to `article_analyses.embedding`. Update `analyzed_at` only after both analysis and embedding are saved. Because pending detection uses LEFT JOIN logic (see section 19), articles whose `article_analyses` row exists but has `embedding IS NULL` will automatically be picked up for embedding backfill on the next run without re-running the full analysis.
+Update the `/api/analyze` route to also call Google's `gemini-embedding-001` for each article alongside the existing analysis call, requesting `outputDimensionality: 1536` so the result matches the existing `vector(1536)` column, and save the result to `article_analyses.embedding`. Update `analyzed_at` only after both analysis and embedding are saved. Because pending detection uses LEFT JOIN logic (see section 19), articles whose `article_analyses` row exists but has `embedding IS NULL` will automatically be picked up for embedding backfill on the next run without re-running the full analysis.
 
 To find related articles, query `article_analyses` joined to `articles` and `sources`, filter to rows where the embedding is not null and the article is analyzed and is not the current article, then order by cosine distance (`<=>`) to the current article's embedding and limit to 5 results.
 
@@ -625,13 +625,13 @@ Never expose to browser code:
 
 - Supabase service role key
 - Oxylabs credentials
-- OpenAI credentials
+- Google/Gemini credentials
 - scheduler/admin secrets
 
 Never run from browser code:
 
 - Oxylabs calls
-- OpenAI/model calls
+- Google/model calls
 - scraping
 - analysis
 - scheduler processing
@@ -649,7 +649,7 @@ Canonical list lives in `.env.example`. Only `NEXT_PUBLIC_*` values may reach br
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY`                                               | Supabase anon key                                                                       | client + server |
 | `SUPABASE_SERVICE_ROLE_KEY`                                                   | Service-role DB access for writes and pipeline reads                                    | server only     |
 | `OXY_WSA_USERNAME` / `OXY_WSA_PASSWORD`                                       | Oxylabs Web Scraper API + Scheduler auth                                                | server only     |
-| `OPENAI_API_KEY`                                                              | AI analysis and `text-embedding-3-small`                                                | server only     |
+| `GOOGLE_GENERATIVE_AI_API_KEY`                                                | AI analysis and `gemini-embedding-001`                                                  | server only     |
 | `BIASLY_ADMIN_SECRET`                                                         | Shared secret for `Biasly_Admin_Secret` on action routes (section 15)                 | server only     |
 | `ANALYSIS_BATCH_SIZE`                                                         | Optional; articles analyzed per batch (default 5)                                       | server only     |
 | `CRON_SECRET`                                                                 | Protects `GET /api/cron/pipeline`; injected by Vercel, not in `.env.local` (section 18) | server only     |
@@ -686,13 +686,13 @@ When in doubt:
 
 "Run available checks" (sections 2 and 21) means running these from the project root and reporting the results:
 
-- `npm run typecheck` â€” TypeScript, no emit (`tsc --noEmit`)
-- `npm run lint` â€” ESLint (`eslint`)
-- `npm run build` â€” Next.js production build, only when the change could affect the build
+- `npm run typecheck` — TypeScript, no emit (`tsc --noEmit`)
+- `npm run lint` — ESLint (`eslint`)
+- `npm run build` — Next.js production build, only when the change could affect the build
 
 Development and runtime:
 
-- `npm run dev` â€” start the Next.js dev server; watch its terminal for scrape and analysis logs (section 17)
-- `npm run start` â€” run the production build locally after `npm run build`
+- `npm run dev` — start the Next.js dev server; watch its terminal for scrape and analysis logs (section 17)
+- `npm run start` — run the production build locally after `npm run build`
 
 After implementation, run `typecheck` and `lint` at minimum. Add `build` when routes, config, or server modules changed. Report the exact command output; do not claim a check passed without running it.

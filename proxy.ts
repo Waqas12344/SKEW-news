@@ -2,10 +2,10 @@ import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server';
 
 const isPublicRoute = createRouteMatcher([
   '/',
+  '/news/(.*)',
   '/sign-in(.*)',
   '/sign-up(.*)',
   '/api/public(.*)',
-  // Action and read routes — guarded by x-skew-admin-secret, not Clerk
   '/api/scrape',
   '/api/sources',
   '/api/analyze',

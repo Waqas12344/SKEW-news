@@ -1,5 +1,6 @@
 import * as React from "react";
 import Image from "next/image";
+import Link from "next/link";
 import { Clock, BookOpen } from "lucide-react";
 import { BiasMeter } from "./bias-meter";
 import { Badge } from "./badge";
@@ -123,9 +124,9 @@ function ArticleCardInner({
 export function ArticleCard({ href, ...props }: ArticleCardProps) {
   if (href) {
     return (
-      <a href={href} className="block group">
+      <Link href={href} className="block group">
         <ArticleCardInner {...props} />
-      </a>
+      </Link>
     );
   }
   return (

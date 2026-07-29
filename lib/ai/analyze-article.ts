@@ -2,16 +2,17 @@ import "server-only";
 
 // =============================================================================
 // AI article analysis — wraps generateText + Output.object (ai@7 API)
-// Uses openai('gpt-4o-mini') which reads OPENAI_API_KEY from env automatically.
+// Uses google('gemini-2.5-flash') which reads GOOGLE_GENERATIVE_AI_API_KEY
+// from env automatically.
 // =============================================================================
 
 import { generateText, Output } from "ai";
-import { openai } from "@ai-sdk/openai";
+import { google } from "@ai-sdk/google";
 import { AnalysisOutputSchema, type AnalysisOutput } from "./schema";
 import type { ArticleWithRelations } from "@/lib/supabase/types";
 
 // Centralized model constant — stored in article_analyses.model
-const ANALYSIS_MODEL = "gpt-4o-mini";
+const ANALYSIS_MODEL = "gemini-2.5-flash";
 
 // Max chars of raw_text passed to the model — keeps token usage bounded
 const MAX_TEXT_CHARS = 8_000;
@@ -36,7 +37,7 @@ export type AnalyzeResult =
   | { success: false; error: string };
 
 /**
- * Analyzes a single article using the OpenAI model via the AI SDK.
+ * Analyzes a single article using the Google Gemini model via the AI SDK.
  * Uses generateText + Output.object (ai@7 API — no generateObject).
  * Returns a typed result — never throws.
  */
@@ -55,7 +56,7 @@ ${article.raw_text.slice(0, MAX_TEXT_CHARS)}`;
 
   try {
     const result = await generateText({
-      model: openai(ANALYSIS_MODEL),
+      model: google(ANALYSIS_MODEL),
       output: Output.object({ schema: AnalysisOutputSchema }),
       instructions: SYSTEM_PROMPT,
       prompt,

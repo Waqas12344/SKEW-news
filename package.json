@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@ai-sdk/google": "4.0.28",
     "@ai-sdk/openai": "4.0.23",
     "@clerk/nextjs": "^7.6.1",
     "@supabase/supabase-js": "^2.110.8",
