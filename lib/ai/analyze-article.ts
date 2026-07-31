@@ -4,15 +4,19 @@ import "server-only";
 // AI article analysis — wraps generateText + Output.object (ai@7 API)
 // Uses google('gemini-2.5-flash') which reads GOOGLE_GENERATIVE_AI_API_KEY
 // from env automatically.
+// Embedding generation uses google.embedding('gemini-embedding-001') (§20).
 // =============================================================================
 
-import { generateText, Output } from "ai";
+import { generateText, Output, embed } from "ai";
 import { google } from "@ai-sdk/google";
 import { AnalysisOutputSchema, type AnalysisOutput } from "./schema";
 import type { ArticleWithRelations } from "@/lib/supabase/types";
 
 // Centralized model constant — stored in article_analyses.model
 const ANALYSIS_MODEL = "gemini-2.5-flash";
+
+// Embedding model constant (§20)
+const EMBEDDING_MODEL = "gemini-embedding-001";
 
 // Max chars of raw_text passed to the model — keeps token usage bounded
 const MAX_TEXT_CHARS = 8_000;
@@ -78,6 +82,44 @@ ${article.raw_text.slice(0, MAX_TEXT_CHARS)}`;
     }
 
     return { success: true, output: parsed.data, model: ANALYSIS_MODEL };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { success: false, error: message };
+  }
+}
+
+// =============================================================================
+// Embedding generation (§20)
+// =============================================================================
+
+export type EmbeddingResult =
+  | { success: true; embedding: number[] }
+  | { success: false; error: string };
+
+/**
+ * Generates a 1536-dimension embedding for an article using gemini-embedding-001.
+ * Embeds: article title + first MAX_TEXT_CHARS of raw_text.
+ * Returns a typed result — never throws.
+ */
+export async function generateEmbedding(
+  article: ArticleWithRelations
+): Promise<EmbeddingResult> {
+  const text = `${article.title}\n\n${article.raw_text.slice(0, MAX_TEXT_CHARS)}`;
+
+  try {
+    const { embedding } = await embed({
+      model: google.embedding(EMBEDDING_MODEL),
+      value: text,
+      providerOptions: {
+        google: {
+          outputDimensionality: 1536,
+          taskType: "SEMANTIC_SIMILARITY",
+        },
+      },
+      maxRetries: 0, // pipeline handles retry logic
+    });
+
+    return { success: true, embedding };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return { success: false, error: message };

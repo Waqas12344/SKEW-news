@@ -61,4 +61,6 @@ export interface AnalysisSummary {
   durationMs: number;
   batchCount: number;
   failures: Array<{ articleId: string; title: string; error: string }>;
+  embeddingsGenerated?: number; // §20
+  embeddingsFailed?: number;    // §20
 }

@@ -101,6 +101,7 @@ export interface Database {
           loaded_terms: string[];
           disclaimer: string | null;
           model: string;
+          embedding: number[] | null; // §20 pgvector
           created_at: string;
         };
         Insert: {
@@ -119,6 +120,7 @@ export interface Database {
           loaded_terms?: string[];
           disclaimer?: string | null;
           model: string;
+          embedding?: number[] | null; // §20 pgvector
           created_at?: string;
         };
         Update: {
@@ -137,6 +139,7 @@ export interface Database {
           loaded_terms?: string[];
           disclaimer?: string | null;
           model?: string;
+          embedding?: number[] | null; // §20 pgvector
           created_at?: string;
         };
       };

@@ -235,3 +235,107 @@ export async function saveAnalysis(
   // Only set analyzed_at after the analysis row is confirmed saved
   await updateArticleAnalyzedAt(articleId);
 }
+
+// =============================================================================
+// §20 — pgvector: embedding backfill, similarity search
+// =============================================================================
+
+/**
+ * Returns articles that have an article_analyses row but embedding IS NULL.
+ * Used by the backfill loop in the analysis pipeline (§20).
+ * Selects article_analyses(id, embedding) — lightweight.
+ */
+export async function getPendingEmbeddings(limit?: number): Promise<ArticleWithRelations[]> {
+  const { data, error } = await createServiceClient()
+    .from("articles")
+    .select("*, sources(name, logo_url), article_analyses(id, embedding)")
+    .order("created_at", { ascending: true });
+
+  if (error) {
+    throw new Error(`getPendingEmbeddings failed: ${error.message}`);
+  }
+
+  const rows = (data ?? []) as unknown as ArticleWithRelations[];
+
+  // Keep rows where an analysis row exists but embedding is null
+  const pending = rows.filter((row) => {
+    const analyses = Array.isArray(row.article_analyses)
+      ? row.article_analyses
+      : row.article_analyses
+      ? [row.article_analyses]
+      : [];
+    if (analyses.length === 0) return false;
+    const analysis = analyses[0];
+    return analysis && (analysis as { embedding?: number[] | null }).embedding == null;
+  });
+
+  return limit !== undefined ? pending.slice(0, limit) : pending;
+}
+
+/**
+ * Updates the embedding column on an existing article_analyses row.
+ * Used by the backfill loop — only called when analysis already exists (§20).
+ * Also refreshes analyzed_at so the article is re-surfaced as fully processed.
+ * Throws on DB error — caller catches and counts as failed.
+ */
+export async function saveEmbedding(
+  articleId: string,
+  embedding: number[]
+): Promise<void> {
+  const client = createServiceClient();
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { error } = await (client.from("article_analyses") as any)
+    .update({ embedding })
+    .eq("article_id", articleId);
+
+  if (error) {
+    throw new Error(`saveEmbedding failed: ${error.message}`);
+  }
+
+  // Re-stamp analyzed_at so the article is fully up to date
+  await updateArticleAnalyzedAt(articleId);
+}
+
+/**
+ * Shape returned by getRelatedArticles — maps directly to RelatedArticleCardProps.
+ */
+export interface RelatedArticle {
+  article_id: string;
+  title: string;
+  image_url: string;
+  published_at: string;
+  source_name: string;
+}
+
+/**
+ * Returns up to `limit` articles similar to the given embedding via cosine distance.
+ * Uses the match_articles RPC backed by the IVFFlat index (§20).
+ * Returns [] on any error — related articles are non-critical; never throws.
+ */
+export async function getRelatedArticles(
+  articleId: string,
+  embedding: number[],
+  limit = 5
+): Promise<RelatedArticle[]> {
+  try {
+    const client = createServiceClient();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data, error } = await (client.rpc as any)("match_articles", {
+      query_embedding: embedding,
+      match_count: limit,
+      exclude_id: articleId,
+    });
+
+    if (error) {
+      console.warn(`[getRelatedArticles] RPC error: ${error.message}`);
+      return [];
+    }
+
+    return (data ?? []) as RelatedArticle[];
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn(`[getRelatedArticles] Unexpected error: ${message}`);
+    return [];
+  }
+}

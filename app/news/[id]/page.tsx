@@ -6,9 +6,11 @@ import { Footer } from "@/components/homepage/Footer";
 import { BiasMeter } from "@/components/ui/bias-meter";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { getArticleDetailById } from "@/lib/supabase/queries/articles";
-import { toDetailData } from "@/lib/supabase/mappers";
+import { getArticleDetailById, getRelatedArticles } from "@/lib/supabase/queries/articles";
+import { toDetailData, formatDate, readTimeFromText } from "@/lib/supabase/mappers";
+import { RelatedArticleCard } from "@/components/ui/related-article-card";
 import type { RelatedArticleCardProps } from "@/components/ui/related-article-card";
+import type { ArticleAnalysis } from "@/lib/supabase/types";
 
 export const dynamic = "force-dynamic";
 
@@ -72,8 +74,25 @@ export default async function NewsDetailsPage({
 
   const article = toDetailData(row);
 
-  // Related stories deferred to §20 (pgvector). Section is hidden when empty.
-  const relatedStories: RelatedArticleCardProps[] = [];
+  // §20 — extract embedding from the analysis row, then fetch related articles.
+  // Section is hidden when the current article has no embedding.
+  const analysis = Array.isArray(row.article_analyses)
+    ? row.article_analyses[0]
+    : row.article_analyses;
+  const embedding = (analysis as ArticleAnalysis | null)?.embedding ?? null;
+
+  let relatedStories: RelatedArticleCardProps[] = [];
+  if (embedding) {
+    const related = await getRelatedArticles(id, embedding, 5);
+    relatedStories = related.map((r) => ({
+      title: r.title,
+      imageUrl: r.image_url,
+      category: r.source_name,
+      publishedAt: formatDate(r.published_at),
+      readingTime: readTimeFromText(""),
+      href: `/news/${r.article_id}`,
+    }));
+  }
 
   return (
     <div className="flex flex-col min-h-screen bg-[#F6F6F6]">
@@ -179,7 +198,7 @@ export default async function NewsDetailsPage({
                 ))}
               </div>
 
-              {/* Related Stories — hidden until §20 pgvector populates it */}
+              {/* Related Stories — shown when the article has an embedding (§20) */}
               {relatedStories.length > 0 && (
                 <div className="flex flex-col gap-4 pt-2">
                   <h3 className="text-[20px] font-semibold leading-[1.3] text-[#0D0D0F]">
@@ -187,9 +206,7 @@ export default async function NewsDetailsPage({
                   </h3>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
                     {relatedStories.map((story) => (
-                      <div key={story.href}>
-                        {/* RelatedArticleCard rendered here in §20 */}
-                      </div>
+                      <RelatedArticleCard key={story.href} {...story} />
                     ))}
                   </div>
                 </div>

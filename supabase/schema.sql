@@ -41,8 +41,11 @@ create index if not exists articles_published_at_idx on public.articles(publishe
 create index if not exists articles_analyzed_at_idx  on public.articles(analyzed_at);
 
 -- =============================================================================
--- article_analyses (one per article; §19) — no embedding column yet (§20)
+-- article_analyses (one per article; §19)
+-- embedding vector(1536) added in §20 — requires pgvector extension
 -- =============================================================================
+create extension if not exists vector; -- pgvector (§20)
+
 create table if not exists public.article_analyses (
   id                uuid primary key default gen_random_uuid(),
   article_id        uuid not null unique references public.articles(id) on delete cascade,
@@ -59,10 +62,50 @@ create table if not exists public.article_analyses (
   loaded_terms      text[] not null default '{}',
   disclaimer        text,
   model             text not null,
+  embedding         vector(1536),             -- §20 pgvector similarity search
   created_at        timestamptz not null default now(),
   constraint article_analyses_pct_sum
     check (left_percentage + center_percentage + right_percentage = 100)
 );
+
+-- IVFFlat cosine index for similarity search (§20)
+create index if not exists article_analyses_embedding_idx
+  on public.article_analyses
+  using ivfflat (embedding vector_cosine_ops)
+  with (lists = 1);
+
+-- match_articles RPC — returns up to match_count similar articles by cosine distance (§20)
+create or replace function public.match_articles(
+  query_embedding  vector(1536),
+  match_count      int,
+  exclude_id       uuid
+)
+returns table (
+  article_id   uuid,
+  title        text,
+  image_url    text,
+  published_at timestamptz,
+  source_name  text
+)
+language sql
+security invoker
+set search_path = public, extensions
+as $$
+  select
+    a.id          as article_id,
+    a.title,
+    a.image_url,
+    a.published_at,
+    s.name        as source_name
+  from article_analyses aa
+  join articles a  on a.id = aa.article_id
+  join sources  s  on s.id = a.source_id
+  where aa.embedding is not null
+    and aa.article_id <> exclude_id
+    and a.analyzed_at is not null
+  order by aa.embedding <=> query_embedding
+  limit match_count;
+$$;
 
 -- =============================================================================
 -- logs (§7)
