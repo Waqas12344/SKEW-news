@@ -41,7 +41,7 @@ import type {
 // Constants
 // ---------------------------------------------------------------------------
 
-const SCHEDULER_CRON = "0 * * * *"; // top of every hour
+const SCHEDULER_CRON = "0 8 * * *"; // daily at 08:00 UTC — Vercel Cron fires at 09:00 UTC
 const DEFAULT_LIMIT_PER_SOURCE = 5;
 
 // ---------------------------------------------------------------------------
