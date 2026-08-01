@@ -64,3 +64,21 @@ export interface AnalysisSummary {
   embeddingsGenerated?: number; // §20
   embeddingsFailed?: number;    // §20
 }
+
+// =============================================================================
+// Scheduler pipeline types (§18)
+// =============================================================================
+
+export interface SchedulerSummary {
+  status: "completed" | "failed";
+  schedulesChecked: number;
+  runsFound: number;
+  jobsFound: number;
+  jobsProcessed: number;
+  jobsSkipped: number;    // pending or faulted
+  jobsFailed: number;
+  scrapeResult: ScrapeSummary | null;
+  analyzeResult: AnalysisSummary | null;
+  durationMs: number;
+  error?: string;
+}

@@ -1,6 +1,9 @@
+"use client";
+
 import * as React from "react";
 import Image from "next/image";
 import Link from "next/link";
+import posthog from "posthog-js";
 import { Clock, BookOpen } from "lucide-react";
 import { BiasMeter } from "./bias-meter";
 import { Badge } from "./badge";
@@ -124,7 +127,17 @@ function ArticleCardInner({
 export function ArticleCard({ href, ...props }: ArticleCardProps) {
   if (href) {
     return (
-      <Link href={href} className="block group">
+      <Link
+        href={href}
+        className="block group"
+        onClick={() =>
+          posthog.capture("article_opened", {
+            category: props.category,
+            region: props.region,
+            bias_label: props.biasLabel,
+          })
+        }
+      >
         <ArticleCardInner {...props} />
       </Link>
     );

@@ -1,5 +1,8 @@
+"use client";
+
 import Image from "next/image";
 import Link from "next/link";
+import posthog from "posthog-js";
 import { Clock, BookOpen } from "lucide-react";
 
 export interface RelatedArticleCardProps {
@@ -22,7 +25,16 @@ export function RelatedArticleCard({
   href = "#",
 }: RelatedArticleCardProps) {
   return (
-    <Link href={href} className="group flex gap-3 items-start">
+    <Link
+      href={href}
+      className="group flex gap-3 items-start"
+      onClick={() =>
+        posthog.capture("related_article_opened", {
+          category,
+          region,
+        })
+      }
+    >
       {/* Thumbnail */}
       <div className="relative shrink-0 w-20 h-20 rounded-[8px] overflow-hidden bg-[#F0F0F0]">
         <Image

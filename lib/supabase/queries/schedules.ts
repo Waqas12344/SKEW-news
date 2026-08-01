@@ -81,6 +81,23 @@ export async function insertScheduleRun(
 }
 
 /**
+ * Upserts a schedule run record keyed on (schedule_id, run_id, job_id).
+ * Safe to call multiple times for the same job — won't create duplicates.
+ */
+export async function upsertScheduleRun(
+  runData: InsertOxylabsScheduleRun
+): Promise<void> {
+  const client = createServiceClient();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { error } = await (client.from("oxylabs_schedule_runs") as any)
+    .upsert(runData, { onConflict: "schedule_id,run_id,job_id" });
+
+  if (error) {
+    throw new Error(`upsertScheduleRun failed: ${error.message}`);
+  }
+}
+
+/**
  * Returns unprocessed runs for a given schedule_id.
  */
 export async function getUnprocessedRuns(
