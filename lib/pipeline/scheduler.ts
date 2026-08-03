@@ -24,6 +24,7 @@ import {
   getSchedules,
   getUnprocessedRuns,
   markRunProcessed,
+  reopenPrematurelyProcessedRuns,
   updateScheduleStatus,
   upsertSchedule,
   upsertScheduleRun,
@@ -271,6 +272,18 @@ export async function runSchedulerProcessing(): Promise<ScrapeSummary> {
           );
         }
       }
+    }
+
+    // Step 2b — reopen any runs that were prematurely processed when jobs were
+    // still pending but have since become "done" on Oxylabs (§18 bug fix).
+    // This must run AFTER upsertScheduleRun so the result_status is up to date.
+    try {
+      await reopenPrematurelyProcessedRuns(schedule.schedule_id);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(
+        `[scheduler:process:${source.name}] reopenPrematurelyProcessedRuns failed: ${msg}`
+      );
     }
 
     // Step 3 — fetch unprocessed DB runs for this schedule
